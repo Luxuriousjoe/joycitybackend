@@ -55,11 +55,15 @@ exports.updateUploadStatus = async (req, res, next) => {
        upload_status, mediaId, platform]
     );
 
-    // Update overall media status
+    // Drive is canonical storage. Optional delivery failures must not hide
+    // media that has already been stored successfully.
     const [uploads]  = await db.promise().query('SELECT platform, upload_status FROM uploads WHERE media_id = ?', [mediaId]);
-    const allSuccess = uploads.every(u => u.upload_status === 'success');
-    const anyFailed  = uploads.some(u => u.upload_status === 'failed');
-    const newStatus  = allSuccess ? 'uploaded' : anyFailed ? 'failed' : 'uploading';
+    const driveUpload = uploads.find(u => u.platform === 'google_drive');
+    const newStatus = driveUpload?.upload_status === 'success'
+      ? 'uploaded'
+      : driveUpload?.upload_status === 'failed'
+        ? 'failed'
+        : 'uploading';
     await db.promise().query('UPDATE media SET status = ? WHERE id = ?', [newStatus, mediaId]);
 
     logger.media('STATUS_UPD', platform, mediaId, `→ ${upload_status} | media → ${newStatus}`);

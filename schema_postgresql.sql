@@ -25,12 +25,27 @@ CREATE TABLE IF NOT EXISTS media (
   file_path VARCHAR(500),
   title VARCHAR(200),
   thumbnail_url VARCHAR(500),
+  drive_file_id VARCHAR(255),
+  drive_web_view_link VARCHAR(1000),
+  mime_type VARCHAR(150),
+  file_name VARCHAR(255),
+  file_size BIGINT,
   status VARCHAR(20) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'uploading', 'uploaded', 'failed')),
   uploaded_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE media
+  ADD COLUMN IF NOT EXISTS drive_file_id VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS drive_web_view_link VARCHAR(1000),
+  ADD COLUMN IF NOT EXISTS mime_type VARCHAR(150),
+  ADD COLUMN IF NOT EXISTS file_name VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS file_size BIGINT;
+
+ALTER TABLE media ALTER COLUMN file_path TYPE VARCHAR(1000);
+ALTER TABLE media ALTER COLUMN thumbnail_url TYPE VARCHAR(1000);
 
 CREATE TABLE IF NOT EXISTS media_metadata (
   id BIGSERIAL PRIMARY KEY,
@@ -49,7 +64,7 @@ CREATE TABLE IF NOT EXISTS uploads (
   id BIGSERIAL PRIMARY KEY,
   media_id BIGINT NOT NULL REFERENCES media(id) ON DELETE CASCADE,
   platform VARCHAR(20) NOT NULL
-    CHECK (platform IN ('telegram', 'youtube')),
+    CHECK (platform IN ('google_drive', 'telegram', 'youtube')),
   upload_status VARCHAR(20) NOT NULL DEFAULT 'pending'
     CHECK (upload_status IN ('pending', 'in_progress', 'success', 'failed')),
   telegram_msg_id VARCHAR(100),
@@ -62,6 +77,11 @@ CREATE TABLE IF NOT EXISTS uploads (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (media_id, platform)
 );
+
+ALTER TABLE uploads DROP CONSTRAINT IF EXISTS uploads_platform_check;
+ALTER TABLE uploads
+  ADD CONSTRAINT uploads_platform_check
+  CHECK (platform IN ('google_drive', 'telegram', 'youtube'));
 
 CREATE TABLE IF NOT EXISTS logs (
   id BIGSERIAL PRIMARY KEY,
@@ -115,6 +135,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS saved_videos_user_video_unique
 
 CREATE INDEX IF NOT EXISTS media_created_at_idx ON media (created_at DESC);
 CREATE INDEX IF NOT EXISTS media_type_status_idx ON media (type, status);
+CREATE UNIQUE INDEX IF NOT EXISTS media_drive_file_id_unique
+  ON media (drive_file_id)
+  WHERE drive_file_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS uploads_media_id_idx ON uploads (media_id);
 CREATE INDEX IF NOT EXISTS logs_timestamp_idx ON logs (timestamp DESC);
 CREATE INDEX IF NOT EXISTS refresh_tokens_user_id_idx ON refresh_tokens (user_id);

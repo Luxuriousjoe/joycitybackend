@@ -1,4 +1,7 @@
 const db     = require('../config/db_config');
+const config = require('../config/app_config');
+const driveService = require('../services/google_drive_service');
+const { removeTemporaryFile } = require('../middleware/media_upload_middleware');
 const logger = require('../utils/logger');
 
 // ─── GET ALL MEDIA ────────────────────────────────────────────
@@ -8,7 +11,9 @@ exports.getAllMedia = async (req, res, next) => {
   try {
     const offset = (parseInt(page) - 1) * parseInt(limit);
     let query = `
-      SELECT m.id, m.type, m.title, m.thumbnail_url, m.status, m.created_at,
+      SELECT m.id, m.type, m.title, m.file_path, m.thumbnail_url, m.status,
+        m.drive_file_id, m.drive_web_view_link, m.mime_type, m.file_size,
+        m.created_at,
         u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.speaker_name,
         mm.sermon_topic, mm.service_date,
@@ -52,7 +57,9 @@ exports.getMediaById = async (req, res, next) => {
   logger.info(`MEDIA | getMediaById | id:${id}`);
   try {
     const [rows] = await db.promise().query(
-      `SELECT m.id, m.type, m.file_path, m.title, m.thumbnail_url, m.status, m.created_at,
+      `SELECT m.id, m.type, m.file_path, m.title, m.thumbnail_url, m.status,
+        m.drive_file_id, m.drive_web_view_link, m.mime_type, m.file_name,
+        m.file_size, m.created_at,
         u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.participants,
         mm.speaker_name, mm.sermon_topic, mm.service_date,
@@ -74,50 +81,176 @@ exports.getMediaById = async (req, res, next) => {
   } catch (err) { logger.error('getMediaById error:', err.message); next(err); }
 };
 
+// Stream private Drive files through the API when public Drive permissions are
+// disabled. File IDs are checked against PostgreSQL before any Drive request.
+exports.streamDriveFile = async (req, res, next) => {
+  try {
+    const [rows] = await db.promise().query(
+      `SELECT mime_type FROM media
+       WHERE drive_file_id = ? AND status = 'uploaded'`,
+      [req.params.fileId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ success: false, message: 'Media not found' });
+    }
+
+    const response = await driveService.getFileStream(
+      req.params.fileId,
+      req.headers.range,
+    );
+    const headers = response.headers || {};
+    res.status(response.status || 200);
+    res.setHeader('Content-Type', headers['content-type'] || rows[0].mime_type || 'application/octet-stream');
+    res.setHeader('Accept-Ranges', headers['accept-ranges'] || 'bytes');
+    if (headers['content-length']) res.setHeader('Content-Length', headers['content-length']);
+    if (headers['content-range']) res.setHeader('Content-Range', headers['content-range']);
+    response.data.on('error', next);
+    response.data.pipe(res);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── CREATE MEDIA (Admin) ─────────────────────────────────────
 exports.createMedia = async (req, res, next) => {
-  const { type, title, file_path, metadata } = req.body;
+  const { type, title, metadata } = req.body;
   logger.info(`MEDIA | createMedia | type:${type} title:${title} by user:${req.user?.id}`);
+  let driveFile = null;
+  let transactionClient = null;
+
   try {
     if (!type || !['video', 'photo', 'audio'].includes(type)) {
       return res.status(400).json({ success: false, message: 'Valid media type required (video/photo/audio)' });
     }
-
-    const insertSql = `INSERT INTO media (type, title, file_path, status, uploaded_by) VALUES (?, ?, ?, 'pending', ?)`;
-    const insertValues = [type, title || null, file_path || null, req.user.id];
-
-    const [result] = await db.promise().query(insertSql, insertValues);
-    const mediaId = result.insertId;
-    logger.db('INSERT', 'media', `created media id:${mediaId}`);
-
-    if (metadata) {
-      const parsedMetadata = typeof metadata === 'string' ? (() => {
-        try { return JSON.parse(metadata); } catch (e) { return {}; }
-      })() : metadata;
-
-      await db.promise().query(
-        `INSERT INTO media_metadata (media_id, event_name, location, description, participants, speaker_name, sermon_topic, service_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [mediaId, parsedMetadata.event_name||null, parsedMetadata.location||null, parsedMetadata.description||null,
-         parsedMetadata.participants||null, parsedMetadata.speaker_name||null, parsedMetadata.sermon_topic||null, parsedMetadata.service_date||null]
-      );
-      logger.db('INSERT', 'media_metadata', `saved metadata for media id:${mediaId}`);
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'A media file is required. Send it in the multipart field named "file".',
+      });
     }
 
-    await db.promise().query(
-      'INSERT INTO uploads (media_id, platform) VALUES (?, "telegram"), (?, "youtube")',
-      [mediaId, mediaId]
-    );
-    logger.db('INSERT', 'uploads', `created upload rows for media id:${mediaId}`);
+    const expectedMimePrefix = `${type}/`;
+    const actualMimePrefix = type === 'photo' ? 'image/' : expectedMimePrefix;
+    if (!req.file.mimetype.startsWith(actualMimePrefix)) {
+      return res.status(400).json({
+        success: false,
+        message: `The selected ${type} does not match the uploaded file type.`,
+      });
+    }
 
-    await db.promise().query(
-      'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
-      ['MEDIA_CREATED', req.user.id, `${type} media created: ${title}`]
+    driveFile = await driveService.uploadFile({
+      localPath: req.file.path,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      mediaType: type,
+    });
+
+    const apiBaseUrl = `${req.protocol}://${req.get('host')}/api`;
+    const urls = driveService.buildDriveUrls(driveFile.id, apiBaseUrl);
+    const contentUrl = driveFile.contentUrl || urls.apiContentUrl;
+    const thumbnailUrl = type === 'photo' ? contentUrl : null;
+
+    const parsedMetadata = typeof metadata === 'string' ? (() => {
+      try { return JSON.parse(metadata); } catch (_error) { return {}; }
+    })() : (metadata || {});
+
+    transactionClient = await db.pool.connect();
+    await transactionClient.query('BEGIN');
+
+    const mediaResult = await transactionClient.query(
+      `INSERT INTO media
+        (type, title, file_path, thumbnail_url, status, uploaded_by,
+         drive_file_id, drive_web_view_link, mime_type, file_name, file_size)
+       VALUES ($1, $2, $3, $4, 'uploaded', $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        type,
+        title || null,
+        contentUrl,
+        thumbnailUrl,
+        req.user.id,
+        driveFile.id,
+        driveFile.webViewLink,
+        driveFile.mimeType || req.file.mimetype,
+        driveFile.name || req.file.originalname,
+        driveFile.size || req.file.size,
+      ],
+    );
+    const mediaId = mediaResult.rows[0].id;
+    logger.db('INSERT', 'media', `created Drive-backed media id:${mediaId}`);
+
+    await transactionClient.query(
+      `INSERT INTO media_metadata
+        (media_id, event_name, location, description, participants,
+         speaker_name, sermon_topic, service_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        mediaId,
+        parsedMetadata.event_name || null,
+        parsedMetadata.location || null,
+        parsedMetadata.description || null,
+        parsedMetadata.participants || null,
+        parsedMetadata.speaker_name || null,
+        parsedMetadata.sermon_topic || null,
+        parsedMetadata.service_date || null,
+      ],
     );
 
-    logger.media('CREATED', type, mediaId, `by user:${req.user.id}`);
-    return res.status(201).json({ success: true, message: 'Media entry created', data: { id: mediaId } });
-  } catch (err) { logger.error('createMedia error:', err.message); next(err); }
+    await transactionClient.query(
+      `INSERT INTO uploads
+        (media_id, platform, upload_status, upload_date)
+       VALUES ($1, 'google_drive', 'success', NOW())`,
+      [mediaId],
+    );
+
+    if (config.telegram.botToken && config.telegram.channelId) {
+      await transactionClient.query(
+        `INSERT INTO uploads (media_id, platform) VALUES ($1, 'telegram')`,
+        [mediaId],
+      );
+    }
+    if (
+      type !== 'photo' &&
+      config.youtube.clientId &&
+      config.youtube.clientSecret &&
+      config.youtube.refreshToken
+    ) {
+      await transactionClient.query(
+        `INSERT INTO uploads (media_id, platform) VALUES ($1, 'youtube')`,
+        [mediaId],
+      );
+    }
+
+    await transactionClient.query(
+      'INSERT INTO logs (action, user_id, details) VALUES ($1, $2, $3)',
+      ['MEDIA_CREATED', req.user.id, `${type} media stored in Google Drive: ${title || driveFile.name}`],
+    );
+    await transactionClient.query('COMMIT');
+
+    logger.media('DRIVE_STORED', type, mediaId, `by user:${req.user.id}`);
+    return res.status(201).json({
+      success: true,
+      message: 'Media uploaded to Google Drive',
+      data: {
+        id: mediaId,
+        status: 'uploaded',
+        file_path: contentUrl,
+        thumbnail_url: thumbnailUrl,
+        drive_file_id: driveFile.id,
+        drive_web_view_link: driveFile.webViewLink,
+      },
+    });
+  } catch (err) {
+    if (transactionClient) await transactionClient.query('ROLLBACK').catch(() => {});
+    if (driveFile?.id) await driveService.deleteFile(driveFile.id).catch(() => {});
+    logger.error('createMedia error:', err.message);
+    next(err);
+  } finally {
+    transactionClient?.release();
+    await removeTemporaryFile(req.file?.path).catch((error) => {
+      logger.warn(`TEMP | Could not remove ${req.file?.path}: ${error.message}`);
+    });
+  }
 };
 
 // ─── UPDATE MEDIA (Admin) ─────────────────────────────────────
@@ -150,6 +283,7 @@ exports.deleteMedia = async (req, res, next) => {
   try {
     const [rows] = await db.promise().query('SELECT * FROM media WHERE id = ?', [id]);
     if (!rows.length) return res.status(404).json({ success: false, message: 'Media not found' });
+    await driveService.deleteFile(rows[0].drive_file_id);
     await db.promise().query('DELETE FROM media WHERE id = ?', [id]);
     await db.promise().query('INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
       ['MEDIA_DELETED', req.user.id, `Deleted media id:${id}`]);

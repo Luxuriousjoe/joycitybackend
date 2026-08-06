@@ -9,6 +9,7 @@ const cron = require('node-cron');
 const db = require('./config/db_config');
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/error_handler');
+const driveService = require('./services/google_drive_service');
 
 const authRoutes = require('./routes/auth_routes');
 const mediaRoutes = require('./routes/media_routes');
@@ -63,6 +64,10 @@ app.get('/health', async (_req, res) => {
       success: true,
       message: 'Joy City International API is alive',
       database: 'connected',
+      storage: {
+        provider: 'google_drive',
+        ...driveService.getConfigurationStatus(),
+      },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -91,8 +96,8 @@ app.use(errorHandler);
 
 cron.schedule('*/2 * * * *', async () => {
   try {
-    const uploadController = require('./controllers/upload_controller');
-    await uploadController.retryFailedUploads();
+    const deliveryController = require('./controllers/delivery_controller');
+    await deliveryController.retryFailedDeliveries();
   } catch (error) {
     logger.error('Upload retry cron error:', error.message);
   }
@@ -112,6 +117,10 @@ async function start() {
   logger.startup(`Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.startup(`Port: ${port}`);
   logger.startup(`PostgreSQL configured: ${Boolean(process.env.DATABASE_URL)}`);
+  const driveStatus = driveService.getConfigurationStatus();
+  logger.startup(
+    `Google Drive configured: ${driveStatus.configured} (${driveStatus.authMode || 'no auth mode'})`,
+  );
 
   await db.pool.query('SELECT 1');
   const userCount = await db.pool.query('SELECT COUNT(*) AS count FROM users');

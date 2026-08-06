@@ -13,6 +13,7 @@
     "db:migrate": "node scripts/migrate.js",
     "admin:create": "node scripts/create_admin.js",
     "admin:bootstrap": "node scripts/bootstrap_admin.js",
+    "drive:verify": "node scripts/verify_drive.js",
     "check": "node scripts/check.js && node scripts/sql_compat_test.js && node scripts/registration_validation_test.js"
   },
   "dependencies": {

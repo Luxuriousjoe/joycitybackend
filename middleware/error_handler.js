@@ -9,6 +9,22 @@ const errorHandler = (error, req, res, _next) => {
       `${error.code || 'none'} | ${message}`,
   );
 
+  if (error.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      message: 'The selected media file is larger than the server upload limit.',
+      code: 'FILE_TOO_LARGE',
+    });
+  }
+
+  if (error.name === 'MulterError') {
+    return res.status(400).json({
+      success: false,
+      message: `Invalid media upload: ${message}`,
+      code: 'INVALID_UPLOAD',
+    });
+  }
+
   // PostgreSQL unique constraint violation.
   if (error.code === '23505') {
     return res.status(409).json({

@@ -1,12 +1,13 @@
 const express          = require('express');
 const router           = express.Router();
 const uploadController = require('../controllers/upload_controller');
+const deliveryController = require('../controllers/delivery_controller');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth_middleware');
 
 // ── Upload queue (admin only) ──────────────────────────────────
 router.get('/',                   adminMiddleware, uploadController.getUploadQueue);
 router.patch('/:mediaId/status',  adminMiddleware, uploadController.updateUploadStatus);
-router.post('/:mediaId/trigger',  adminMiddleware, uploadController.triggerUpload);
+router.post('/:mediaId/trigger',  adminMiddleware, deliveryController.triggerDelivery);
 
 // ── YouTube channel videos (all authenticated users) ───────────
 router.get('/channel-videos',     authMiddleware,  uploadController.getChannelVideos);

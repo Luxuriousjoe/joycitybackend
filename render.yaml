@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: joy-city-international-api
+    name: grace-church-api
     runtime: node
     plan: free
     buildCommand: npm install
@@ -25,6 +25,36 @@ services:
         sync: false
       - key: BOOTSTRAP_ADMIN_PASSWORD
         sync: false
+      - key: GOOGLE_DRIVE_ENABLED
+        value: "true"
+      - key: GOOGLE_DRIVE_AUTH_MODE
+        value: oauth
+      - key: GOOGLE_DRIVE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_DRIVE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_DRIVE_REFRESH_TOKEN
+        sync: false
+      - key: GOOGLE_DRIVE_REDIRECT_URI
+        value: https://developers.google.com/oauthplayground
+      - key: GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false
+      - key: GOOGLE_DRIVE_MEDIA_FOLDER_ID
+        sync: false
+      - key: GOOGLE_DRIVE_PHOTO_FOLDER_ID
+        sync: false
+      - key: GOOGLE_DRIVE_VIDEO_FOLDER_ID
+        sync: false
+      - key: GOOGLE_DRIVE_AUDIO_FOLDER_ID
+        sync: false
+      - key: GOOGLE_DRIVE_THUMBNAIL_FOLDER_ID
+        sync: false
+      - key: GOOGLE_DRIVE_PUBLIC_FILES
+        value: "true"
+      - key: MAX_FILE_SIZE_MB
+        value: "500"
 
 databases:
   - name: joy-city-postgres

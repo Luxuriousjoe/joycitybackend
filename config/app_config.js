@@ -1,5 +1,11 @@
 const isProduction = process.env.NODE_ENV === 'production';
 
+function enabled(name, fallback = false) {
+  const value = process.env[name];
+  if (value === undefined || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
 function secret(name, developmentFallback) {
   const value = process.env[name];
   if (value) return value;
@@ -32,5 +38,23 @@ module.exports = {
   },
   upload: {
     maxFileSizeMB: Number.parseInt(process.env.MAX_FILE_SIZE_MB || '500', 10),
+  },
+  googleDrive: {
+    enabled: enabled('GOOGLE_DRIVE_ENABLED'),
+    authMode: process.env.GOOGLE_DRIVE_AUTH_MODE?.trim().toLowerCase(),
+    clientId: process.env.GOOGLE_DRIVE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET,
+    refreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN,
+    redirectUri:
+      process.env.GOOGLE_DRIVE_REDIRECT_URI ||
+      'https://developers.google.com/oauthplayground',
+    serviceAccountJson: process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON,
+    rootFolderId: process.env.GOOGLE_DRIVE_FOLDER_ID,
+    mediaFolderId: process.env.GOOGLE_DRIVE_MEDIA_FOLDER_ID,
+    photoFolderId: process.env.GOOGLE_DRIVE_PHOTO_FOLDER_ID,
+    videoFolderId: process.env.GOOGLE_DRIVE_VIDEO_FOLDER_ID,
+    audioFolderId: process.env.GOOGLE_DRIVE_AUDIO_FOLDER_ID,
+    thumbnailFolderId: process.env.GOOGLE_DRIVE_THUMBNAIL_FOLDER_ID,
+    publicFiles: enabled('GOOGLE_DRIVE_PUBLIC_FILES', true),
   },
 };
