@@ -1,4 +1,28 @@
-const { normalizeDepartment } = require('../config/departments');
+// Keep registration's allowed values self-contained so the public auth route
+// cannot fail to boot if a deployment omits an auxiliary config file.
+const departments = Object.freeze([
+  'None',
+  'Welfare',
+  'Follow Up & Recovery',
+  'Teens & Children',
+  'Security',
+  'Sanctuary Keepers',
+  'Ushering',
+  'Protocol',
+  'Media & Publicity',
+  'Technical & Sound',
+  'Choir',
+  'Transport & Logistics',
+  'Secretariat',
+  'Creativity',
+]);
+
+function normalizeDepartment(value) {
+  const requested = String(value || 'None').trim().toLowerCase();
+  return departments.find(
+    (department) => department.toLowerCase() === requested,
+  );
+}
 
 function validateRegistration(input = {}) {
   const name = typeof input.name === 'string' ? input.name.trim() : '';
