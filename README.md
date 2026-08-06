@@ -89,3 +89,18 @@ After setting Render variables, use `npm run drive:verify` in the Render shell.
 It checks authentication and all unique folder IDs without printing credentials.
 The `/health` response also reports whether Drive is configured, but it does not
 make a network call to Drive.
+
+## Timely Reflection
+
+Administrators can create or update a dated Timely Reflection from the mobile
+app under **Settings → Administration → Timely Reflection**. PostgreSQL stores
+the title, scripture reference and text, reflection message, closing prayer,
+author, publish date, and draft/published state. Members see the most recent
+published reflection whose publish date is today or earlier on the Home screen.
+
+The deployment start command runs `npm run db:migrate`, which creates the
+`timely_reflections` table automatically. The endpoints are:
+
+- `GET /api/reflections/current` for authenticated members
+- `GET /api/admin/reflections/latest` for administrators
+- `PUT /api/admin/reflections` to save or publish a reflection

@@ -11,6 +11,30 @@ const logger = require('../utils/logger');
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive';
 const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
 
+function getGoogleErrorCode(error) {
+  const apiError = error.response?.data?.error;
+  if (typeof apiError === 'string') return apiError;
+  return apiError?.status?.toLowerCase() || apiError?.errors?.[0]?.reason || error.code;
+}
+
+function toDriveError(error, action = 'request') {
+  if (getGoogleErrorCode(error) === 'invalid_grant' || error.message === 'invalid_grant') {
+    const authError = new Error(
+      'Google Drive authorization has expired or was revoked. Generate a new OAuth refresh token with the same client ID and secret, then update GOOGLE_DRIVE_REFRESH_TOKEN on Render.',
+    );
+    authError.status = 503;
+    authError.code = 'GOOGLE_DRIVE_REAUTH_REQUIRED';
+    return authError;
+  }
+
+  const detail = error.response?.data?.error?.message || error.message;
+  const driveError = new Error(`Google Drive ${action} failed: ${detail}`);
+  const responseStatus = error.response?.status;
+  driveError.status = responseStatus && responseStatus < 500 ? 400 : 502;
+  driveError.code = 'GOOGLE_DRIVE_ERROR';
+  return driveError;
+}
+
 function parseServiceAccountJson(rawValue) {
   if (!rawValue) return null;
 
@@ -230,11 +254,7 @@ async function uploadFile({ localPath, originalName, mimeType, mediaType }) {
     if (fileId) {
       await drive.files.delete({ fileId, supportsAllDrives: true }).catch(() => {});
     }
-    const status = error.response?.status;
-    const detail = error.response?.data?.error?.message || error.message;
-    const uploadError = new Error(`Google Drive upload failed: ${detail}`);
-    uploadError.status = status && status < 500 ? 400 : 502;
-    throw uploadError;
+    throw toDriveError(error, 'upload');
   }
 }
 
@@ -251,19 +271,23 @@ async function downloadToTemp(fileId, extension = '') {
     return localPath;
   } catch (error) {
     await fs.promises.unlink(localPath).catch(() => {});
-    throw error;
+    throw toDriveError(error, 'download');
   }
 }
 
 async function getFileStream(fileId, range) {
   assertConfigured();
-  return getDriveClient().files.get(
-    { fileId, alt: 'media', supportsAllDrives: true },
-    {
-      responseType: 'stream',
-      headers: range ? { Range: range } : undefined,
-    },
-  );
+  try {
+    return await getDriveClient().files.get(
+      { fileId, alt: 'media', supportsAllDrives: true },
+      {
+        responseType: 'stream',
+        headers: range ? { Range: range } : undefined,
+      },
+    );
+  } catch (error) {
+    throw toDriveError(error, 'download');
+  }
 }
 
 async function deleteFile(fileId) {
@@ -273,31 +297,36 @@ async function deleteFile(fileId) {
     logger.info(`DRIVE | Deleted file id:${fileId}`);
   } catch (error) {
     if (error.response?.status === 404) return;
-    throw error;
+    throw toDriveError(error, 'delete');
   }
 }
 
 async function verifyConfiguration() {
-  const status = assertConfigured();
-  const drive = getDriveClient();
-  const folderTypes = ['media', 'photo', 'video', 'audio', 'thumbnail'];
-  const checked = new Map();
+  try {
+    const status = assertConfigured();
+    const drive = getDriveClient();
+    const folderTypes = ['media', 'photo', 'video', 'audio', 'thumbnail'];
+    const checked = new Map();
 
-  for (const type of folderTypes) {
-    const folderId = resolveFolderId(type);
-    if (!folderId || checked.has(folderId)) continue;
-    const response = await drive.files.get({
-      fileId: folderId,
-      fields: 'id,name,mimeType',
-      supportsAllDrives: true,
-    });
-    if (response.data.mimeType !== FOLDER_MIME_TYPE) {
-      throw new Error(`Configured Drive ID for ${type} is not a folder`);
+    for (const type of folderTypes) {
+      const folderId = resolveFolderId(type);
+      if (!folderId || checked.has(folderId)) continue;
+      const response = await drive.files.get({
+        fileId: folderId,
+        fields: 'id,name,mimeType',
+        supportsAllDrives: true,
+      });
+      if (response.data.mimeType !== FOLDER_MIME_TYPE) {
+        throw new Error(`Configured Drive ID for ${type} is not a folder`);
+      }
+      checked.set(folderId, response.data.name);
     }
-    checked.set(folderId, response.data.name);
-  }
 
-  return { ...status, folderCount: checked.size };
+    return { ...status, folderCount: checked.size };
+  } catch (error) {
+    if (error.status && !error.response) throw error;
+    throw toDriveError(error, 'configuration check');
+  }
 }
 
 module.exports = {
@@ -309,6 +338,7 @@ module.exports = {
   parseServiceAccountJson,
   resolveFolderId,
   sanitizeFileName,
+  toDriveError,
   uploadFile,
   verifyConfiguration,
 };

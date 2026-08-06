@@ -125,6 +125,23 @@ CREATE TABLE IF NOT EXISTS saved_videos (
   saved_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS timely_reflections (
+  id BIGSERIAL PRIMARY KEY,
+  title VARCHAR(200) NOT NULL,
+  scripture_reference VARCHAR(150) NOT NULL,
+  scripture_text TEXT,
+  reflection_text TEXT NOT NULL,
+  prayer TEXT,
+  author_name VARCHAR(150),
+  publish_date DATE NOT NULL UNIQUE,
+  is_published SMALLINT NOT NULL DEFAULT 1
+    CHECK (is_published IN (0, 1)),
+  created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS saved_videos_user_media_unique
   ON saved_videos (user_id, media_id)
   WHERE media_id IS NOT NULL;
@@ -141,6 +158,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS media_drive_file_id_unique
 CREATE INDEX IF NOT EXISTS uploads_media_id_idx ON uploads (media_id);
 CREATE INDEX IF NOT EXISTS logs_timestamp_idx ON logs (timestamp DESC);
 CREATE INDEX IF NOT EXISTS refresh_tokens_user_id_idx ON refresh_tokens (user_id);
+CREATE INDEX IF NOT EXISTS timely_reflections_published_idx
+  ON timely_reflections (is_published, publish_date DESC);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -169,6 +188,12 @@ DROP TRIGGER IF EXISTS youtube_channel_videos_set_updated_at
   ON youtube_channel_videos;
 CREATE TRIGGER youtube_channel_videos_set_updated_at
 BEFORE UPDATE ON youtube_channel_videos
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS timely_reflections_set_updated_at
+  ON timely_reflections;
+CREATE TRIGGER timely_reflections_set_updated_at
+BEFORE UPDATE ON timely_reflections
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 COMMIT;

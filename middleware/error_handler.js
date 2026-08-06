@@ -25,6 +25,14 @@ const errorHandler = (error, req, res, _next) => {
     });
   }
 
+  if (error.code === 'GOOGLE_DRIVE_REAUTH_REQUIRED') {
+    return res.status(503).json({
+      success: false,
+      message,
+      code: 'GOOGLE_DRIVE_REAUTH_REQUIRED',
+    });
+  }
+
   // PostgreSQL unique constraint violation.
   if (error.code === '23505') {
     return res.status(409).json({
