@@ -1,0 +1,30 @@
+const { normalizeDepartment } = require('../config/departments');
+
+function validateRegistration(input = {}) {
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
+  const email = typeof input.email === 'string'
+    ? input.email.trim().toLowerCase()
+    : '';
+  const password = typeof input.password === 'string' ? input.password : '';
+  const department = normalizeDepartment(input.department);
+
+  if (name.length < 2 || name.length > 100) {
+    return { error: 'Name must contain between 2 and 100 characters.' };
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 150) {
+    return { error: 'Enter a valid email address.' };
+  }
+
+  if (password.length < 12 || password.length > 128) {
+    return { error: 'Password must contain between 12 and 128 characters.' };
+  }
+
+  if (!department) {
+    return { error: 'Select a valid department.' };
+  }
+
+  return { value: { name, email, password, department } };
+}
+
+module.exports = { validateRegistration };

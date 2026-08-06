@@ -10,7 +10,7 @@ exports.getAllUsers = async (req, res, next) => {
   logger.info(`ADMIN | getAllUsers | by ${req.user?.email}`);
   try {
     const [rows] = await db.promise().query(
-      'SELECT id, name, email, role, is_active, created_at FROM users ORDER BY created_at DESC'
+      'SELECT id, name, email, role, department, is_active, created_at FROM users ORDER BY created_at DESC'
     );
     logger.db('SELECT', 'users', `returned ${rows.length} users`);
     return res.json({ success: true, data: rows });

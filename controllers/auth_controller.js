@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const db     = require('../config/db_config');
 const config = require('../config/app_config');
 const logger = require('../utils/logger');
+const { validateRegistration } = require('../utils/registration_validation');
 
 // ─── Helper: Generate Tokens ──────────────────────────────────
 const generateTokens = (user) => {
@@ -15,10 +16,76 @@ const generateTokens = (user) => {
     email: user.email,
     role:  user.role,
     name:  user.name,
+    department: user.department || 'None',
   };
   const accessToken  = jwt.sign(payload, config.jwt.secret,        { expiresIn: config.jwt.expiresIn });
   const refreshToken = jwt.sign({ id: user.id }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpires });
   return { accessToken, refreshToken };
+};
+
+// Public member registration. New accounts are always regular users.
+exports.register = async (req, res, next) => {
+  const validation = validateRegistration(req.body);
+  if (validation.error) {
+    return res.status(400).json({
+      success: false,
+      message: validation.error,
+    });
+  }
+
+  const { name, email, password, department } = validation.value;
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 12);
+    const [result] = await db.promise().query(
+      `INSERT INTO users
+         (name, email, role, department, password_hash, is_active)
+       VALUES (?, ?, 'user', ?, ?, 1)`,
+      [name, email, department, passwordHash]
+    );
+
+    const user = {
+      id: result.insertId,
+      name,
+      email,
+      role: 'user',
+      department,
+      avatar_url: null,
+    };
+    const { accessToken, refreshToken } = generateTokens(user);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    await db.promise().query(
+      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+      [user.id, refreshToken, expiresAt]
+    );
+
+    await db.promise().query(
+      'INSERT INTO logs (action, user_id, details, ip_addr) VALUES (?, ?, ?, ?)',
+      ['USER_REGISTERED', user.id, `Member registered in ${department}`, ip]
+    );
+
+    logger.auth('REGISTER_SUCCESS', email, 'user', ip);
+    return res.status(201).json({
+      success: true,
+      message: `Welcome to Joy City International, ${name}!`,
+      data: {
+        accessToken,
+        refreshToken,
+        user,
+      },
+    });
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({
+        success: false,
+        message: 'An account already exists with this email address.',
+      });
+    }
+    logger.error(`REGISTER_ERROR | ${error.message} | email:${email}`);
+    return next(error);
+  }
 };
 
 // ─── LOGIN ────────────────────────────────────────────────────
@@ -140,6 +207,7 @@ exports.login = async (req, res, next) => {
           name:       user.name,
           email:      user.email,
           role:       user.role,
+          department: user.department || 'None',
           avatar_url: user.avatar_url || null,
         },
       },
@@ -228,7 +296,7 @@ exports.getMe = async (req, res, next) => {
   logger.info(`GET_ME | user id:${req.user?.id}`);
   try {
     const [rows] = await db.promise().query(
-      'SELECT id, name, email, role, avatar_url, created_at FROM users WHERE id = ?',
+      'SELECT id, name, email, role, department, avatar_url, created_at FROM users WHERE id = ?',
       [req.user.id]
     );
     if (!rows.length) return res.status(404).json({ success: false, message: 'User not found' });
