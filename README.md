@@ -92,7 +92,7 @@ make a network call to Drive.
 
 ## Timely Reflection
 
-Administrators can create or update a dated Timely Reflection from the mobile
+Administrators can create, edit, or delete dated Timely Reflections from the mobile
 app under **Settings → Administration → Timely Reflection**. PostgreSQL stores
 the title, scripture reference and text, reflection message, closing prayer,
 author, publish date, and draft/published state. Members see the most recent
@@ -103,4 +103,7 @@ The deployment start command runs `npm run db:migrate`, which creates the
 
 - `GET /api/reflections/current` for authenticated members
 - `GET /api/admin/reflections/latest` for administrators
+- `GET /api/admin/reflections` to list reflections for management
 - `PUT /api/admin/reflections` to save or publish a reflection
+- `PUT /api/admin/reflections/:id` to edit a specific reflection
+- `DELETE /api/admin/reflections/:id` to delete a specific reflection

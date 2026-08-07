@@ -25,6 +25,43 @@ function validDate(value) {
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().startsWith(value);
 }
 
+function reflectionPayload(body) {
+  const title = normalizeText(body.title, 200, true);
+  const scriptureReference = normalizeText(
+    body.scripture_reference,
+    150,
+    true,
+  );
+  const scriptureText = normalizeText(body.scripture_text, 10000);
+  const reflectionText = normalizeText(body.reflection_text, 30000, true);
+  const prayer = normalizeText(body.prayer, 10000);
+  const authorName = normalizeText(body.author_name, 150);
+  const publishDate = body.publish_date;
+  const isPublished = body.is_published === false || body.is_published === 0
+    ? 0
+    : 1;
+
+  if (!title || !scriptureReference || !reflectionText) {
+    return {
+      error: 'Title, scripture reference, and reflection message are required.',
+    };
+  }
+  if (!validDate(publishDate)) {
+    return { error: 'A valid publish date in YYYY-MM-DD format is required.' };
+  }
+
+  return {
+    title,
+    scriptureReference,
+    scriptureText,
+    reflectionText,
+    prayer,
+    authorName,
+    publishDate,
+    isPublished,
+  };
+}
+
 exports.getCurrentReflection = async (_req, res, next) => {
   try {
     const [rows] = await db.promise().query(
@@ -55,34 +92,46 @@ exports.getLatestReflectionForAdmin = async (req, res, next) => {
   }
 };
 
-exports.upsertReflection = async (req, res, next) => {
-  const title = normalizeText(req.body.title, 200, true);
-  const scriptureReference = normalizeText(
-    req.body.scripture_reference,
-    150,
-    true,
-  );
-  const scriptureText = normalizeText(req.body.scripture_text, 10000);
-  const reflectionText = normalizeText(req.body.reflection_text, 30000, true);
-  const prayer = normalizeText(req.body.prayer, 10000);
-  const authorName = normalizeText(req.body.author_name, 150);
-  const publishDate = req.body.publish_date;
-  const isPublished = req.body.is_published === false || req.body.is_published === 0
-    ? 0
-    : 1;
+exports.getAllReflectionsForAdmin = async (req, res, next) => {
+  try {
+    const requestedLimit = Number.parseInt(req.query.limit || '50', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 100)
+      : 50;
+    const [rows] = await db.promise().query(
+      `${SELECT_FIELDS}
+       ORDER BY r.publish_date DESC, r.updated_at DESC
+       LIMIT ?`,
+      [limit],
+    );
+    logger.info(
+      `REFLECTION | Admin list requested by ${req.user?.email}; count:${rows.length}`,
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    logger.error('getAllReflectionsForAdmin error:', error.message);
+    next(error);
+  }
+};
 
-  if (!title || !scriptureReference || !reflectionText) {
+exports.upsertReflection = async (req, res, next) => {
+  const payload = reflectionPayload(req.body);
+  if (payload.error) {
     return res.status(400).json({
       success: false,
-      message: 'Title, scripture reference, and reflection message are required.',
+      message: payload.error,
     });
   }
-  if (!validDate(publishDate)) {
-    return res.status(400).json({
-      success: false,
-      message: 'A valid publish date in YYYY-MM-DD format is required.',
-    });
-  }
+  const {
+    title,
+    scriptureReference,
+    scriptureText,
+    reflectionText,
+    prayer,
+    authorName,
+    publishDate,
+    isPublished,
+  } = payload;
 
   try {
     const [result] = await db.promise().query(
@@ -140,6 +189,128 @@ exports.upsertReflection = async (req, res, next) => {
     });
   } catch (error) {
     logger.error('upsertReflection error:', error.message);
+    next(error);
+  }
+};
+
+exports.updateReflection = async (req, res, next) => {
+  const reflectionId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(reflectionId) || reflectionId < 1) {
+    return res.status(400).json({
+      success: false,
+      message: 'A valid reflection ID is required.',
+    });
+  }
+
+  const payload = reflectionPayload(req.body);
+  if (payload.error) {
+    return res.status(400).json({ success: false, message: payload.error });
+  }
+
+  try {
+    const [result] = await db.promise().query(
+      `UPDATE timely_reflections SET
+         title = ?, scripture_reference = ?, scripture_text = ?,
+         reflection_text = ?, prayer = ?, author_name = ?, publish_date = ?,
+         is_published = ?, updated_by = ?
+       WHERE id = ?
+       RETURNING id`,
+      [
+        payload.title,
+        payload.scriptureReference,
+        payload.scriptureText,
+        payload.reflectionText,
+        payload.prayer,
+        payload.authorName,
+        payload.publishDate,
+        payload.isPublished,
+        req.user.id,
+        reflectionId,
+      ],
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Timely Reflection not found.',
+      });
+    }
+
+    await db.promise().query(
+      'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
+      [
+        'TIMELY_REFLECTION_UPDATED',
+        req.user.id,
+        `Timely Reflection ${reflectionId} updated for ${payload.publishDate}`,
+      ],
+    );
+    const [rows] = await db.promise().query(
+      `${SELECT_FIELDS} WHERE r.id = ?`,
+      [reflectionId],
+    );
+    logger.info(
+      `REFLECTION | Updated id:${reflectionId} by ${req.user.email}`,
+    );
+    return res.json({
+      success: true,
+      message: payload.isPublished
+        ? 'Timely Reflection updated and published.'
+        : 'Timely Reflection updated as a draft.',
+      data: rows[0],
+    });
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({
+        success: false,
+        message: 'Another Timely Reflection already uses that publish date.',
+      });
+    }
+    logger.error('updateReflection error:', error.message);
+    next(error);
+  }
+};
+
+exports.deleteReflection = async (req, res, next) => {
+  const reflectionId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(reflectionId) || reflectionId < 1) {
+    return res.status(400).json({
+      success: false,
+      message: 'A valid reflection ID is required.',
+    });
+  }
+
+  try {
+    const [result] = await db.promise().query(
+      `DELETE FROM timely_reflections
+       WHERE id = ?
+       RETURNING id, title, publish_date`,
+      [reflectionId],
+    );
+    if (!result.affectedRows) {
+      return res.status(404).json({
+        success: false,
+        message: 'Timely Reflection not found.',
+      });
+    }
+
+    const deleted = result.rows[0];
+    await db.promise().query(
+      'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
+      [
+        'TIMELY_REFLECTION_DELETED',
+        req.user.id,
+        `Timely Reflection ${reflectionId} deleted: ${deleted.title}`,
+      ],
+    );
+    logger.info(
+      `REFLECTION | Deleted id:${reflectionId} by ${req.user.email}`,
+    );
+    return res.json({
+      success: true,
+      message: 'Timely Reflection deleted successfully.',
+      data: deleted,
+    });
+  } catch (error) {
+    logger.error('deleteReflection error:', error.message);
     next(error);
   }
 };

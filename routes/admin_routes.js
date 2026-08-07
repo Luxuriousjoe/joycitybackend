@@ -15,10 +15,25 @@ router.get(
   adminMiddleware,
   reflectionController.getLatestReflectionForAdmin,
 );
+router.get(
+  '/reflections',
+  adminMiddleware,
+  reflectionController.getAllReflectionsForAdmin,
+);
 router.put(
   '/reflections',
   adminMiddleware,
   reflectionController.upsertReflection,
+);
+router.put(
+  '/reflections/:id',
+  adminMiddleware,
+  reflectionController.updateReflection,
+);
+router.delete(
+  '/reflections/:id',
+  adminMiddleware,
+  reflectionController.deleteReflection,
 );
 
 module.exports = router;
