@@ -194,9 +194,12 @@ CREATE TABLE IF NOT EXISTS sermon_notes (
   content TEXT NOT NULL,
   position_seconds INTEGER CHECK (position_seconds IS NULL OR position_seconds >= 0),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CHECK (media_id IS NOT NULL OR video_id IS NOT NULL)
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Notes can be attached to a sermon or kept as personal/Bible study notes.
+-- Drop the automatically named legacy constraint for existing deployments.
+ALTER TABLE sermon_notes DROP CONSTRAINT IF EXISTS sermon_notes_check;
 
 CREATE TABLE IF NOT EXISTS testimonies (
   id BIGSERIAL PRIMARY KEY,

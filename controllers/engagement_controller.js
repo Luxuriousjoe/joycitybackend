@@ -73,7 +73,7 @@ exports.getNotes = async (req, res, next) => {
     if (req.query.media_id) { conditions.push('n.media_id = ?'); params.push(req.query.media_id); }
     if (req.query.video_id) { conditions.push('n.video_id = ?'); params.push(req.query.video_id); }
     const [rows] = await db.promise().query(
-      `SELECT n.*, COALESCE(m.title, n.sermon_title, mm.event_name, 'Joy City Sermon') AS display_title,
+      `SELECT n.*, COALESCE(m.title, n.sermon_title, mm.event_name, 'Personal note') AS display_title,
         m.thumbnail_url, mm.speaker_name, mm.sermon_topic
        FROM sermon_notes n
        LEFT JOIN media m ON m.id = n.media_id
@@ -91,15 +91,15 @@ exports.getNotes = async (req, res, next) => {
 exports.createNote = async (req, res, next) => {
   const { media_id, video_id, sermon_title, note_title, content, position_seconds } = req.body;
   try {
-    if ((!media_id && !video_id) || !content?.trim()) {
-      return res.status(400).json({ success: false, message: 'A sermon and note content are required' });
+    if (!content?.trim()) {
+      return res.status(400).json({ success: false, message: 'Note content is required' });
     }
     const [result] = await db.promise().query(
       `INSERT INTO sermon_notes
         (user_id, media_id, video_id, sermon_title, note_title, content, position_seconds)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, media_id || null, video_id || null, sermon_title || null,
-       note_title?.trim() || 'Sermon note', content.trim(), position_seconds ?? null],
+      [req.user.id, media_id || null, video_id || null, sermon_title?.trim() || 'Personal note',
+       note_title?.trim() || 'My note', content.trim(), position_seconds ?? null],
     );
     const [rows] = await db.promise().query('SELECT * FROM sermon_notes WHERE id = ?', [result.insertId]);
     return res.status(201).json({ success: true, data: rows[0] });
