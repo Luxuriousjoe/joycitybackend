@@ -107,3 +107,23 @@ The deployment start command runs `npm run db:migrate`, which creates the
 - `PUT /api/admin/reflections` to save or publish a reflection
 - `PUT /api/admin/reflections/:id` to edit a specific reflection
 - `DELETE /api/admin/reflections/:id` to delete a specific reflection
+
+## Member engagement features
+
+The same idempotent PostgreSQL migration now creates the event calendar,
+listening progress, sermon notes, testimony moderation, and smart-notification
+tables. Render applies these additions automatically at the beginning of the
+configured start command.
+
+- `/api/events` exposes published events; `/api/events/admin` provides admin CRUD.
+- `/api/engagement/progress` stores per-member audio/video positions.
+- `/api/engagement/notes` stores private sermon notes for the signed-in member.
+- `/api/testimonies` accepts written, photo, audio, and video submissions;
+  `/api/testimonies/admin` supports review, rejection, publication, and featuring.
+- `/api/notifications` provides the member inbox and preferences;
+  `/api/notifications/admin` supports immediate or scheduled campaigns for all
+  members, one department, or one member.
+
+New events, newly uploaded sermons, published Timely Reflections, and featured
+testimonies create notification-inbox entries automatically. Event creation also
+schedules a 24-hour reminder when enough time remains.

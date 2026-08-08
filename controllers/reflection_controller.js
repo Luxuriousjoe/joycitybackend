@@ -164,6 +164,24 @@ exports.upsertReflection = async (req, res, next) => {
     );
     const reflectionId = result.rows[0].id;
 
+    if (isPublished) {
+      try {
+        await db.promise().query(
+          `INSERT INTO notifications
+            (title, body, category, audience_type, action_route, scheduled_at, created_by)
+           VALUES (?, ?, 'reflection', 'all', '/', ?, ?)`,
+          [
+            `Timely Reflection: ${title}`,
+            `${scriptureReference} — Your reflection for today is ready.`,
+            `${publishDate}T06:00:00+01:00`,
+            req.user.id,
+          ],
+        );
+      } catch (notificationError) {
+        logger.warn(`REFLECTION | Notification skipped: ${notificationError.message}`);
+      }
+    }
+
     await db.promise().query(
       'INSERT INTO logs (action, user_id, details) VALUES (?, ?, ?)',
       [
@@ -233,6 +251,24 @@ exports.updateReflection = async (req, res, next) => {
         success: false,
         message: 'Timely Reflection not found.',
       });
+    }
+
+    if (payload.isPublished) {
+      try {
+        await db.promise().query(
+          `INSERT INTO notifications
+            (title, body, category, audience_type, action_route, scheduled_at, created_by)
+           VALUES (?, ?, 'reflection', 'all', '/', ?, ?)`,
+          [
+            `Timely Reflection: ${payload.title}`,
+            `${payload.scriptureReference} — Your reflection for today is ready.`,
+            `${payload.publishDate}T06:00:00+01:00`,
+            req.user.id,
+          ],
+        );
+      } catch (notificationError) {
+        logger.warn(`REFLECTION | Notification skipped: ${notificationError.message}`);
+      }
     }
 
     await db.promise().query(

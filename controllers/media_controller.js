@@ -16,7 +16,7 @@ exports.getAllMedia = async (req, res, next) => {
         m.created_at,
         u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.speaker_name,
-        mm.sermon_topic, mm.service_date,
+        mm.sermon_topic, mm.series_name, mm.scripture_reference, mm.service_date,
         up_yt.youtube_link, up_yt.youtube_video_id,
         up_tg.telegram_msg_id
       FROM media m
@@ -27,20 +27,30 @@ exports.getAllMedia = async (req, res, next) => {
       WHERE m.status = 'uploaded'
     `;
     const params = [];
+    const countParams = [];
+    const countConditions = [];
     if (type && ['video', 'photo', 'audio'].includes(type)) {
       query += ' AND m.type = ?'; params.push(type);
+      countConditions.push('m.type = ?'); countParams.push(type);
     }
     if (search) {
-      query += ' AND (mm.event_name LIKE ? OR mm.description LIKE ? OR mm.speaker_name LIKE ? OR m.title LIKE ?)';
-      const s = `%${search}%`; params.push(s, s, s, s);
+      query += ` AND (mm.event_name ILIKE ? OR mm.description ILIKE ? OR
+        mm.speaker_name ILIKE ? OR mm.sermon_topic ILIKE ? OR
+        mm.series_name ILIKE ? OR mm.scripture_reference ILIKE ? OR m.title ILIKE ?)`;
+      const s = `%${search}%`; params.push(s, s, s, s, s, s, s);
+      countConditions.push(`(mm.event_name ILIKE ? OR mm.description ILIKE ? OR
+        mm.speaker_name ILIKE ? OR mm.sermon_topic ILIKE ? OR
+        mm.series_name ILIKE ? OR mm.scripture_reference ILIKE ? OR m.title ILIKE ?)`);
+      countParams.push(s, s, s, s, s, s, s);
     }
     query += ' ORDER BY m.created_at DESC LIMIT ? OFFSET ?';
     params.push(parseInt(limit), offset);
 
     const [rows] = await db.promise().query(query, params);
     const [[{ total }]] = await db.promise().query(
-      `SELECT COUNT(*) AS total FROM media m LEFT JOIN media_metadata mm ON m.id = mm.media_id WHERE m.status = 'uploaded' ${type ? 'AND m.type = ?' : ''}`,
-      type ? [type] : []
+      `SELECT COUNT(*) AS total FROM media m LEFT JOIN media_metadata mm ON m.id = mm.media_id
+       WHERE m.status = 'uploaded' ${countConditions.length ? `AND ${countConditions.join(' AND ')}` : ''}`,
+      countParams
     );
 
     logger.db('SELECT', 'media', `returned ${rows.length} of ${total} items`);
@@ -62,7 +72,8 @@ exports.getMediaById = async (req, res, next) => {
         m.file_size, m.created_at,
         u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.participants,
-        mm.speaker_name, mm.sermon_topic, mm.service_date,
+        mm.speaker_name, mm.sermon_topic, mm.series_name,
+        mm.scripture_reference, mm.service_date,
         up_yt.youtube_link, up_yt.youtube_video_id, up_tg.telegram_msg_id
        FROM media m
        LEFT JOIN users u ON m.uploaded_by = u.id
@@ -182,8 +193,8 @@ exports.createMedia = async (req, res, next) => {
     await transactionClient.query(
       `INSERT INTO media_metadata
         (media_id, event_name, location, description, participants,
-         speaker_name, sermon_topic, service_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         speaker_name, sermon_topic, series_name, scripture_reference, service_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         mediaId,
         parsedMetadata.event_name || null,
@@ -192,6 +203,8 @@ exports.createMedia = async (req, res, next) => {
         parsedMetadata.participants || null,
         parsedMetadata.speaker_name || null,
         parsedMetadata.sermon_topic || null,
+        parsedMetadata.series_name || null,
+        parsedMetadata.scripture_reference || null,
         parsedMetadata.service_date || null,
       ],
     );
@@ -226,6 +239,24 @@ exports.createMedia = async (req, res, next) => {
       ['MEDIA_CREATED', req.user.id, `${type} media stored in Google Drive: ${title || driveFile.name}`],
     );
     await transactionClient.query('COMMIT');
+
+    if (type === 'audio' || type === 'video') {
+      try {
+        await db.promise().query(
+          `INSERT INTO notifications
+            (title, body, category, audience_type, action_route, created_by)
+           VALUES (?, ?, 'sermon', 'all', ?, ?)`,
+          [
+            `New ${type === 'audio' ? 'audio' : 'video'} sermon`,
+            title || parsedMetadata.sermon_topic || 'A new Joy City teaching is ready.',
+            `/media/${mediaId}`,
+            req.user.id,
+          ],
+        );
+      } catch (notificationError) {
+        logger.warn(`MEDIA | Notification skipped for id:${mediaId}: ${notificationError.message}`);
+      }
+    }
 
     logger.media('DRIVE_STORED', type, mediaId, `by user:${req.user.id}`);
     return res.status(201).json({
@@ -266,9 +297,10 @@ exports.updateMedia = async (req, res, next) => {
     if (metadata) {
       await db.promise().query(
         `UPDATE media_metadata SET event_name=?, location=?, description=?, participants=?,
-         speaker_name=?, sermon_topic=?, service_date=? WHERE media_id=?`,
+         speaker_name=?, sermon_topic=?, series_name=?, scripture_reference=?, service_date=? WHERE media_id=?`,
         [metadata.event_name, metadata.location, metadata.description, metadata.participants,
-         metadata.speaker_name, metadata.sermon_topic, metadata.service_date, id]
+         metadata.speaker_name, metadata.sermon_topic, metadata.series_name,
+         metadata.scripture_reference, metadata.service_date, id]
       );
       logger.db('UPDATE', 'media_metadata', `metadata updated for media id:${id}`);
     }

@@ -16,6 +16,10 @@ const mediaRoutes = require('./routes/media_routes');
 const uploadRoutes = require('./routes/upload_routes');
 const adminRoutes = require('./routes/admin_routes');
 const reflectionRoutes = require('./routes/reflection_routes');
+const eventRoutes = require('./routes/event_routes');
+const engagementRoutes = require('./routes/engagement_routes');
+const testimonyRoutes = require('./routes/testimony_routes');
+const notificationRoutes = require('./routes/notification_routes');
 
 const app = express();
 const port = Number.parseInt(process.env.PORT || '5000', 10);
@@ -87,6 +91,10 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/uploads', uploadRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reflections', reflectionRoutes);
+app.use('/api/events', eventRoutes);
+app.use('/api/engagement', engagementRoutes);
+app.use('/api/testimonies', testimonyRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use('*', (req, res) => {
   res.status(404).json({
