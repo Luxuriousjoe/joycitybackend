@@ -7,12 +7,21 @@ const logger = require('../utils/logger');
 // ─── GET ALL MEDIA ────────────────────────────────────────────
 exports.getAllMedia = async (req, res, next) => {
   const { type, page = 1, limit = 20, search } = req.query;
+  const normalizedSearch = typeof search === 'string'
+    ? search.trim().replace(/\s+/g, ' ')
+    : '';
+  const searchTerms = normalizedSearch
+    .split(' ')
+    .map((term) => term.trim())
+    .filter(Boolean)
+    .slice(0, 8);
   logger.info(`MEDIA | getAllMedia | type:${type||'all'} page:${page} search:${search||'none'}`);
   try {
     const offset = (parseInt(page) - 1) * parseInt(limit);
     let query = `
       SELECT m.id, m.type, m.title, m.file_path, m.thumbnail_url, m.status,
-        m.drive_file_id, m.drive_web_view_link, m.mime_type, m.file_size,
+        m.drive_file_id, m.drive_web_view_link, m.mime_type, m.file_name,
+        m.file_size,
         m.created_at,
         u.name AS uploaded_by_name,
         mm.event_name, mm.location, mm.description, mm.speaker_name,
@@ -33,17 +42,34 @@ exports.getAllMedia = async (req, res, next) => {
       query += ' AND m.type = ?'; params.push(type);
       countConditions.push('m.type = ?'); countParams.push(type);
     }
-    if (search) {
-      query += ` AND (mm.event_name ILIKE ? OR mm.description ILIKE ? OR
-        mm.speaker_name ILIKE ? OR mm.sermon_topic ILIKE ? OR
-        mm.series_name ILIKE ? OR mm.scripture_reference ILIKE ? OR m.title ILIKE ?)`;
-      const s = `%${search}%`; params.push(s, s, s, s, s, s, s);
-      countConditions.push(`(mm.event_name ILIKE ? OR mm.description ILIKE ? OR
-        mm.speaker_name ILIKE ? OR mm.sermon_topic ILIKE ? OR
-        mm.series_name ILIKE ? OR mm.scripture_reference ILIKE ? OR m.title ILIKE ?)`);
-      countParams.push(s, s, s, s, s, s, s);
+    if (searchTerms.length) {
+      // Match every word independently across all useful media fields. This
+      // makes word order, repeated spaces, and filename extensions irrelevant.
+      const searchableText = `CONCAT_WS(' ',
+        m.title, m.file_name, m.mime_type, mm.event_name, mm.description,
+        mm.speaker_name, mm.sermon_topic, mm.series_name,
+        mm.scripture_reference, mm.location)`;
+      for (const term of searchTerms) {
+        const condition = `${searchableText} ILIKE ?`;
+        const value = `%${term}%`;
+        query += ` AND ${condition}`;
+        params.push(value);
+        countConditions.push(condition);
+        countParams.push(value);
+      }
     }
-    query += ' ORDER BY m.created_at DESC LIMIT ? OFFSET ?';
+    if (searchTerms.length) {
+      // Prefer a full-phrase hit, while still returning token matches where
+      // the words appear in different metadata fields.
+      query += ` ORDER BY CASE WHEN CONCAT_WS(' ', m.title, m.file_name,
+        mm.event_name, mm.description, mm.speaker_name, mm.sermon_topic,
+        mm.series_name, mm.scripture_reference) ILIKE ? THEN 0 ELSE 1 END,
+        m.created_at DESC`;
+      params.push(`%${normalizedSearch}%`);
+    } else {
+      query += ' ORDER BY m.created_at DESC';
+    }
+    query += ' LIMIT ? OFFSET ?';
     params.push(parseInt(limit), offset);
 
     const [rows] = await db.promise().query(query, params);
