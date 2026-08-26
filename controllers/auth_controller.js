@@ -8,6 +8,7 @@ const db     = require('../config/db_config');
 const config = require('../config/app_config');
 const logger = require('../utils/logger');
 const { validateRegistration } = require('../utils/registration_validation');
+const { verifyFirebaseIdToken } = require('../services/firebase_admin_service');
 
 // ─── Helper: Generate Tokens ──────────────────────────────────
 const generateTokens = (user) => {
@@ -217,6 +218,116 @@ exports.login = async (req, res, next) => {
     logger.error(`LOGIN_ERROR | ${err.message} | email:${email} | ip:${ip}`);
     logger.error('Stack:', err.stack);
     next(err);
+  }
+};
+
+// Exchanges a verified Firebase identity for the app's own JWT session.
+// Roles always come from this database, never from client/Firebase input.
+exports.firebaseLogin = async (req, res, next) => {
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  try {
+    const decoded = await verifyFirebaseIdToken(req.body?.idToken);
+    const provider = decoded.firebase?.sign_in_provider;
+    if (provider !== 'google.com') {
+      return res.status(401).json({
+        success: false,
+        message: 'A Google-authenticated Firebase account is required.',
+      });
+    }
+
+    if (!decoded.email || decoded.email_verified !== true) {
+      return res.status(401).json({
+        success: false,
+        message: 'Google account email is not verified.',
+      });
+    }
+
+    const email = decoded.email.toLowerCase().trim();
+    const name = String(decoded.name || email.split('@')[0]).trim().slice(0, 100);
+    const avatarUrl = typeof decoded.picture === 'string'
+      ? decoded.picture.slice(0, 500)
+      : null;
+
+    let [rows] = await db.promise().query(
+      'SELECT * FROM users WHERE email = ?',
+      [email]
+    );
+
+    if (!rows.length) {
+      // A random, unknown bcrypt value satisfies the legacy password column;
+      // Google-created accounts authenticate through Firebase, not this value.
+      const unusablePasswordHash = await bcrypt.hash(
+        `${decoded.uid}:${Date.now()}:${Math.random()}`,
+        12
+      );
+      const [result] = await db.promise().query(
+        `INSERT INTO users
+           (name, email, role, department, password_hash, avatar_url, is_active)
+         VALUES (?, ?, 'user', 'None', ?, ?, 1)`,
+        [name, email, unusablePasswordHash, avatarUrl]
+      );
+      rows = [{
+        id: result.insertId,
+        name,
+        email,
+        role: 'user',
+        department: 'None',
+        avatar_url: avatarUrl,
+        is_active: 1,
+      }];
+    }
+
+    const user = rows[0];
+    if (Number(user.is_active) !== 1) {
+      return res.status(403).json({
+        success: false,
+        message: 'This account has been disabled.',
+      });
+    }
+
+    const { accessToken, refreshToken } = generateTokens(user);
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    await db.promise().query(
+      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+      [user.id, refreshToken, expiresAt]
+    );
+
+    logger.auth('GOOGLE_LOGIN_SUCCESS', user.email, user.role, ip);
+    return res.json({
+      success: true,
+      data: {
+        accessToken,
+        refreshToken,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          department: user.department || 'None',
+          avatar_url: user.avatar_url || avatarUrl,
+        },
+      },
+    });
+  } catch (error) {
+    if (error.code === 'AUTH_TOKEN_REQUIRED') {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (String(error.code || '').startsWith('auth/')) {
+      logger.warn(`GOOGLE_LOGIN_REJECTED | ${error.code} | ip:${ip}`);
+      return res.status(401).json({
+        success: false,
+        message: 'Google session is invalid or expired. Please sign in again.',
+      });
+    }
+    if (error.message?.includes('FIREBASE_SERVICE_ACCOUNT_JSON') ||
+        error.message?.includes('default credentials')) {
+      logger.error(`FIREBASE_CONFIG_ERROR | ${error.message}`);
+      return res.status(503).json({
+        success: false,
+        message: 'Google sign-in is not configured on the server yet.',
+      });
+    }
+    return next(error);
   }
 };
 
