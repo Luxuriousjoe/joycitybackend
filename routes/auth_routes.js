@@ -5,6 +5,7 @@ const authController = require('../controllers/auth_controller');
 const { authMiddleware } = require('../middleware/auth_middleware');
 
 router.post('/login', authController.login);
+router.post('/firebase', authController.firebaseLogin);
 router.post('/register', authController.register);
 router.post('/refresh', authController.refreshToken);
 router.post('/logout', authController.logout);
