@@ -43,25 +43,44 @@ function hashCode(challengeId, code) {
 }
 
 async function sendCode(email, code) {
-  const from = normalizeSender(config.resend.from);
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${config.resend.apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from,
-      to: [email],
-      subject: 'Your Joy City verification code',
-      text: `Your Joy City verification code is ${code}. It expires in 5 minutes.`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:28px"><h2>Verify your email</h2><p>Enter this code in the Joy City app:</p><p style="font-size:34px;font-weight:700;letter-spacing:8px">${code}</p><p>This code expires in 5 minutes. Never share it with anyone.</p></div>`,
-    }),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Resend email failed (${response.status}): ${detail}`);
+  const subject = 'Your Joy City verification code';
+  const text = `Your Joy City verification code is ${code}. It expires in 5 minutes.`;
+  const html = `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:28px"><h2>Verify your email</h2><p>Enter this code in the Joy City app:</p><p style="font-size:34px;font-weight:700;letter-spacing:8px">${code}</p><p>This code expires in 5 minutes. Never share it with anyone.</p></div>`;
+
+  if (config.smtp.user && config.smtp.appPassword) {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: config.smtp.user, pass: config.smtp.appPassword },
+    });
+    await transporter.sendMail({
+      from: `${config.smtp.fromName} <${config.smtp.user}>`,
+      to: email,
+      subject,
+      text,
+      html,
+    });
+    return;
   }
+
+  if (config.resend.apiKey && config.resend.from) {
+    const from = normalizeSender(config.resend.from);
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.resend.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: [email], subject, text, html }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Resend email failed (${response.status}): ${detail}`);
+    }
+    return;
+  }
+
+  throw new Error('Configure Gmail SMTP or a verified Resend sender');
 }
 
 async function isTrustedDevice(userId, rawDeviceId) {
@@ -80,8 +99,9 @@ async function isTrustedDevice(userId, rawDeviceId) {
 }
 
 async function issueChallenge({ userId, email, deviceId: rawDeviceId, authMethod, requiresProfile }) {
-  if (!config.resend.apiKey || !config.resend.from) {
-    throw new Error('RESEND_API_KEY and RESEND_FROM_EMAIL must be configured');
+  if ((!config.smtp.user || !config.smtp.appPassword) &&
+      (!config.resend.apiKey || !config.resend.from)) {
+    throw new Error('Configure Gmail SMTP or Resend before sending verification codes');
   }
   const deviceId = cleanDeviceId(rawDeviceId);
   const id = crypto.randomUUID();

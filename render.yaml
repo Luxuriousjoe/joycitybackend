@@ -27,6 +27,12 @@ services:
         sync: false
       - key: RESEND_FROM_EMAIL
         sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_APP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM_NAME
+        value: Joy City International
       - key: ALLOWED_ORIGINS
         value: "*"
       - key: BOOTSTRAP_ADMIN_NAME
