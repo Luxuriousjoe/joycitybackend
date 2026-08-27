@@ -126,13 +126,31 @@ async function issueChallenge({ userId, email, deviceId: rawDeviceId, authMethod
   };
 }
 
-async function resendChallenge(challengeId) {
-  const [rows] = await db.promise().query(
-    'SELECT * FROM email_verification_challenges WHERE id = ? AND verified_at IS NULL',
-    [challengeId],
-  );
-  if (!rows.length) throw Object.assign(new Error('Verification request not found'), { code: 'NOT_FOUND' });
-  const challenge = rows[0];
+async function findChallenge(challengeId, email, rawDeviceId, includeVerified = false) {
+  let rows = [];
+  if (challengeId) {
+    [rows] = await db.promise().query(
+      `SELECT * FROM email_verification_challenges
+       WHERE id = ? ${includeVerified ? '' : 'AND verified_at IS NULL'}`,
+      [challengeId],
+    );
+  }
+  if (!rows.length && email && rawDeviceId) {
+    const deviceId = cleanDeviceId(rawDeviceId);
+    [rows] = await db.promise().query(
+      `SELECT * FROM email_verification_challenges
+       WHERE email = ? AND device_id = ?
+       ${includeVerified ? '' : 'AND verified_at IS NULL'}
+       ORDER BY created_at DESC LIMIT 1`,
+      [String(email).toLowerCase().trim(), deviceId],
+    );
+  }
+  return rows[0];
+}
+
+async function resendChallenge(challengeId, email, deviceId) {
+  const challenge = await findChallenge(challengeId, email, deviceId, false);
+  if (!challenge) throw Object.assign(new Error('Verification request not found. Please sign in again.'), { code: 'NOT_FOUND' });
   const waitMs = new Date(challenge.resend_available_at).getTime() - Date.now();
   if (waitMs > 0) {
     const error = new Error('Please wait before requesting another code');
@@ -146,20 +164,17 @@ async function resendChallenge(challengeId) {
     `UPDATE email_verification_challenges
      SET code_hash = ?, expires_at = ?, resend_available_at = ?, attempts = 0
      WHERE id = ?`,
-    [hashCode(challengeId, code), new Date(now + CODE_TTL_MS),
-      new Date(now + RESEND_COOLDOWN_MS), challengeId],
+    [hashCode(challenge.id, code), new Date(now + CODE_TTL_MS),
+      new Date(now + RESEND_COOLDOWN_MS), challenge.id],
   );
   await sendCode(challenge.email, code);
   return { expiresInSeconds: 300, resendAfterSeconds: 120 };
 }
 
-async function verifyChallenge(challengeId, code) {
-  const [rows] = await db.promise().query(
-    'SELECT * FROM email_verification_challenges WHERE id = ? AND verified_at IS NULL',
-    [challengeId],
-  );
-  if (!rows.length) throw Object.assign(new Error('Verification request not found'), { code: 'NOT_FOUND' });
-  const challenge = rows[0];
+async function verifyChallenge(challengeId, code, email, deviceId) {
+  const challenge = await findChallenge(challengeId, email, deviceId, true);
+  if (!challenge) throw Object.assign(new Error('Verification request not found. Please sign in again.'), { code: 'NOT_FOUND' });
+  if (challenge.verified_at) return challenge;
   if (new Date(challenge.expires_at).getTime() <= Date.now()) {
     throw Object.assign(new Error('Verification code has expired'), { code: 'CODE_EXPIRED' });
   }
@@ -167,17 +182,17 @@ async function verifyChallenge(challengeId, code) {
     throw Object.assign(new Error('Too many incorrect attempts. Request a new code.'), { code: 'TOO_MANY_ATTEMPTS' });
   }
   const expected = Buffer.from(challenge.code_hash, 'hex');
-  const supplied = Buffer.from(hashCode(challengeId, String(code || '').trim()), 'hex');
+  const supplied = Buffer.from(hashCode(challenge.id, String(code || '').trim()), 'hex');
   if (!crypto.timingSafeEqual(expected, supplied)) {
     await db.promise().query(
       'UPDATE email_verification_challenges SET attempts = attempts + 1 WHERE id = ?',
-      [challengeId],
+      [challenge.id],
     );
     throw Object.assign(new Error('Incorrect verification code'), { code: 'INVALID_CODE' });
   }
   await db.promise().query(
     'UPDATE email_verification_challenges SET verified_at = NOW() WHERE id = ?',
-    [challengeId],
+    [challenge.id],
   );
   return challenge;
 }

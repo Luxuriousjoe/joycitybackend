@@ -387,7 +387,11 @@ exports.firebaseLogin = async (req, res, next) => {
 
 exports.resendVerification = async (req, res) => {
   try {
-    const data = await verification.resendChallenge(req.body?.challengeId);
+    const data = await verification.resendChallenge(
+      req.body?.challengeId,
+      req.body?.email,
+      req.body?.deviceId,
+    );
     return res.json({ success: true, message: 'A new code was sent.', data });
   } catch (error) {
     const status = error.code === 'RESEND_COOLDOWN' ? 429 : 400;
@@ -405,6 +409,8 @@ exports.verifyEmailCode = async (req, res) => {
     const challenge = await verification.verifyChallenge(
       req.body?.challengeId,
       req.body?.code,
+      req.body?.email,
+      req.body?.deviceId,
     );
     if (Number(challenge.requires_profile) === 1) {
       return res.json({
