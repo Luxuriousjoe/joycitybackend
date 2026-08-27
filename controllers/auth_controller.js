@@ -373,7 +373,8 @@ exports.firebaseLogin = async (req, res, next) => {
       });
     }
     if (error.message?.includes('FIREBASE_SERVICE_ACCOUNT_JSON') ||
-        error.message?.includes('default credentials')) {
+        error.message?.includes('default credentials') ||
+        error.message?.includes('service account object')) {
       logger.error(`FIREBASE_CONFIG_ERROR | ${error.message}`);
       return res.status(503).json({
         success: false,
