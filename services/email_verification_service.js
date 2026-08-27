@@ -52,6 +52,9 @@ async function sendCode(email, code) {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: config.smtp.user, pass: config.smtp.appPassword },
+      connectionTimeout: 30_000,
+      greetingTimeout: 30_000,
+      socketTimeout: 45_000,
     });
     await transporter.sendMail({
       from: `${config.smtp.fromName} <${config.smtp.user}>`,
