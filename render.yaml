@@ -19,6 +19,10 @@ services:
         generateValue: true
       - key: EMAIL_VERIFICATION_SECRET
         generateValue: true
+      - key: FIREBASE_PROJECT_ID
+        value: joycityinternational-8bbd0
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL

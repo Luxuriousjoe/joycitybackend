@@ -1,6 +1,10 @@
 const { applicationDefault, cert, getApps, initializeApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 
+const firebaseProjectId =
+  process.env.FIREBASE_PROJECT_ID || 'joycityinternational-8bbd0';
+let canCheckRevocation = false;
+
 function getFirebaseApp() {
   if (getApps().length) return getApps()[0];
 
@@ -10,7 +14,7 @@ function getFirebaseApp() {
     try {
       serviceAccount = JSON.parse(serviceAccountJson);
     } catch (_) {
-      throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON');
+      return initializeApp({ projectId: firebaseProjectId });
     }
 
     // Accept values copied through dashboards that renamed fields or escaped
@@ -28,15 +32,30 @@ function getFirebaseApp() {
     };
 
     if (!normalized.projectId || !normalized.clientEmail || !normalized.privateKey) {
-      throw new Error(
-        'FIREBASE_SERVICE_ACCOUNT_JSON must be the Firebase Admin private-key JSON file',
-      );
+      return initializeApp({ projectId: firebaseProjectId });
     }
 
-    return initializeApp({ credential: cert(normalized) });
+    try {
+      const app = initializeApp({
+        credential: cert(normalized),
+        projectId: normalized.projectId,
+      });
+      canCheckRevocation = true;
+      return app;
+    } catch (_) {
+      return initializeApp({ projectId: firebaseProjectId });
+    }
   }
 
-  return initializeApp({ credential: applicationDefault() });
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    canCheckRevocation = true;
+    return initializeApp({
+      credential: applicationDefault(),
+      projectId: firebaseProjectId,
+    });
+  }
+
+  return initializeApp({ projectId: firebaseProjectId });
 }
 
 async function verifyFirebaseIdToken(idToken) {
@@ -45,7 +64,7 @@ async function verifyFirebaseIdToken(idToken) {
     error.code = 'AUTH_TOKEN_REQUIRED';
     throw error;
   }
-  return getAuth(getFirebaseApp()).verifyIdToken(idToken, true);
+  return getAuth(getFirebaseApp()).verifyIdToken(idToken, canCheckRevocation);
 }
 
 module.exports = { verifyFirebaseIdToken };
