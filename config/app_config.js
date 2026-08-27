@@ -36,6 +36,13 @@ module.exports = {
     ),
     refreshExpires: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   },
+  resend: {
+    apiKey: process.env.RESEND_API_KEY,
+    from: process.env.RESEND_FROM_EMAIL,
+  },
+  emailVerification: {
+    secret: secret('EMAIL_VERIFICATION_SECRET', 'joy_city_email_verification_development_secret'),
+  },
   upload: {
     maxFileSizeMB: Number.parseInt(process.env.MAX_FILE_SIZE_MB || '500', 10),
   },

@@ -26,6 +26,17 @@ The permanent Render host is `https://grace-church-api.onrender.com`, and the
 Flutter API base URL is `https://grace-church-api.onrender.com/api`. Do not
 change or override this host unless the project owner explicitly requests it.
 
+Email/device verification requires these Render environment variables:
+
+- `RESEND_API_KEY`: a Resend sending API key kept only on the backend.
+- `RESEND_FROM_EMAIL`: a sender on your verified domain, for example
+  `Joy City <verify@updates.example.com>`.
+- `EMAIL_VERIFICATION_SECRET`: a long random secret used to hash verification
+  codes; the Blueprint generates it automatically.
+
+Verification codes expire after five minutes. Resends are limited to once every
+two minutes, and a device is trusted only after the correct code is submitted.
+
 For the first deployment, configure `BOOTSTRAP_ADMIN_NAME`,
 `BOOTSTRAP_ADMIN_EMAIL`, and `BOOTSTRAP_ADMIN_PASSWORD`. The startup command
 creates or promotes that administrator. After you confirm login, remove all

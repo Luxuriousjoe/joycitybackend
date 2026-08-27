@@ -17,6 +17,12 @@ services:
         generateValue: true
       - key: JWT_REFRESH_SECRET
         generateValue: true
+      - key: EMAIL_VERIFICATION_SECRET
+        generateValue: true
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
       - key: ALLOWED_ORIGINS
         value: "*"
       - key: BOOTSTRAP_ADMIN_NAME
@@ -55,7 +61,6 @@ services:
         value: "true"
       - key: MAX_FILE_SIZE_MB
         value: "500"
-
 databases:
   - name: joy-city-postgres
     plan: free

@@ -131,7 +131,6 @@ async function start() {
   logger.startup(
     `Google Drive configured: ${driveStatus.configured} (${driveStatus.authMode || 'no auth mode'})`,
   );
-
   await db.pool.query('SELECT 1');
   const userCount = await db.pool.query('SELECT COUNT(*) AS count FROM users');
   logger.startup(`PostgreSQL connected; ${userCount.rows[0].count} user(s)`);

@@ -9,6 +9,8 @@ const config = require('../config/app_config');
 const logger = require('../utils/logger');
 const { validateRegistration } = require('../utils/registration_validation');
 const { verifyFirebaseIdToken } = require('../services/firebase_admin_service');
+const verification = require('../services/email_verification_service');
+const { normalizeDepartment } = require('../config/departments');
 
 // ─── Helper: Generate Tokens ──────────────────────────────────
 const generateTokens = (user) => {
@@ -23,6 +25,27 @@ const generateTokens = (user) => {
   const refreshToken = jwt.sign({ id: user.id }, config.jwt.refreshSecret, { expiresIn: config.jwt.refreshExpires });
   return { accessToken, refreshToken };
 };
+
+async function createSession(user) {
+  const { accessToken, refreshToken } = generateTokens(user);
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await db.promise().query(
+    'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+    [user.id, refreshToken, expiresAt],
+  );
+  return {
+    accessToken,
+    refreshToken,
+    user: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      department: user.department || 'None',
+      avatar_url: user.avatar_url || null,
+    },
+  };
+}
 
 // Public member registration. New accounts are always regular users.
 exports.register = async (req, res, next) => {
@@ -54,13 +77,13 @@ exports.register = async (req, res, next) => {
       department,
       avatar_url: null,
     };
-    const { accessToken, refreshToken } = generateTokens(user);
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-    await db.promise().query(
-      'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
-      [user.id, refreshToken, expiresAt]
-    );
+    const verificationData = await verification.issueChallenge({
+      userId: user.id,
+      email,
+      deviceId: req.body.deviceId,
+      authMethod: 'password',
+      requiresProfile: false,
+    });
 
     await db.promise().query(
       'INSERT INTO logs (action, user_id, details, ip_addr) VALUES (?, ?, ?, ?)',
@@ -70,12 +93,9 @@ exports.register = async (req, res, next) => {
     logger.auth('REGISTER_SUCCESS', email, 'user', ip);
     return res.status(201).json({
       success: true,
-      message: `Welcome to Joy City International, ${name}!`,
-      data: {
-        accessToken,
-        refreshToken,
-        user,
-      },
+      message: 'Enter the verification code sent to your email.',
+      verificationRequired: true,
+      data: verificationData,
     });
   } catch (error) {
     if (error.code === '23505') {
@@ -166,6 +186,22 @@ exports.login = async (req, res, next) => {
       logger.info(`LOGIN | Upgraded legacy password hash for user id:${user.id}`);
     }
 
+    if (!(await verification.isTrustedDevice(user.id, req.body.deviceId))) {
+      const verificationData = await verification.issueChallenge({
+        userId: user.id,
+        email: user.email,
+        deviceId: req.body.deviceId,
+        authMethod: 'password',
+        requiresProfile: false,
+      });
+      return res.json({
+        success: true,
+        verificationRequired: true,
+        message: 'Verify this device using the code sent to your email.',
+        data: verificationData,
+      });
+    }
+
     const { accessToken, refreshToken } = generateTokens(user);
     logger.info(`LOGIN | Tokens generated for user id:${user.id}`);
 
@@ -253,7 +289,8 @@ exports.firebaseLogin = async (req, res, next) => {
       [email]
     );
 
-    if (!rows.length) {
+    const isNewUser = !rows.length;
+    if (isNewUser) {
       // A random, unknown bcrypt value satisfies the legacy password column;
       // Google-created accounts authenticate through Firebase, not this value.
       const unusablePasswordHash = await bcrypt.hash(
@@ -282,6 +319,22 @@ exports.firebaseLogin = async (req, res, next) => {
       return res.status(403).json({
         success: false,
         message: 'This account has been disabled.',
+      });
+    }
+
+    if (isNewUser || !(await verification.isTrustedDevice(user.id, req.body.deviceId))) {
+      const verificationData = await verification.issueChallenge({
+        userId: user.id,
+        email: user.email,
+        deviceId: req.body.deviceId,
+        authMethod: 'google',
+        requiresProfile: isNewUser,
+      });
+      return res.json({
+        success: true,
+        verificationRequired: true,
+        message: 'Enter the verification code sent to your email.',
+        data: verificationData,
       });
     }
 
@@ -328,6 +381,77 @@ exports.firebaseLogin = async (req, res, next) => {
       });
     }
     return next(error);
+  }
+};
+
+exports.resendVerification = async (req, res) => {
+  try {
+    const data = await verification.resendChallenge(req.body?.challengeId);
+    return res.json({ success: true, message: 'A new code was sent.', data });
+  } catch (error) {
+    const status = error.code === 'RESEND_COOLDOWN' ? 429 : 400;
+    return res.status(status).json({
+      success: false,
+      code: error.code,
+      message: error.message,
+      retryAfterSeconds: error.retryAfterSeconds,
+    });
+  }
+};
+
+exports.verifyEmailCode = async (req, res) => {
+  try {
+    const challenge = await verification.verifyChallenge(
+      req.body?.challengeId,
+      req.body?.code,
+    );
+    if (Number(challenge.requires_profile) === 1) {
+      return res.json({
+        success: true,
+        profileRequired: true,
+        data: { challengeId: challenge.id, email: challenge.email },
+      });
+    }
+    await verification.trustChallengeDevice(challenge);
+    const [rows] = await db.promise().query(
+      'SELECT * FROM users WHERE id = ? AND is_active = 1',
+      [challenge.user_id],
+    );
+    if (!rows.length) return res.status(403).json({ success: false, message: 'Account is unavailable.' });
+    return res.json({ success: true, data: await createSession(rows[0]) });
+  } catch (error) {
+    return res.status(400).json({ success: false, code: error.code, message: error.message });
+  }
+};
+
+exports.completeOnboarding = async (req, res) => {
+  try {
+    const { challengeId, name, department } = req.body || {};
+    const cleanName = String(name || '').trim();
+    const cleanDepartment = normalizeDepartment(department);
+    if (cleanName.length < 2 || cleanName.length > 100 || !cleanDepartment) {
+      return res.status(400).json({ success: false, message: 'Enter your name and select a valid department.' });
+    }
+    const [challenges] = await db.promise().query(
+      `SELECT * FROM email_verification_challenges
+       WHERE id = ? AND verified_at IS NOT NULL AND requires_profile = 1`,
+      [challengeId],
+    );
+    if (!challenges.length) return res.status(400).json({ success: false, message: 'Complete email verification first.' });
+    const challenge = challenges[0];
+    await db.promise().query(
+      'UPDATE users SET name = ?, department = ? WHERE id = ?',
+      [cleanName, cleanDepartment, challenge.user_id],
+    );
+    await verification.trustChallengeDevice(challenge);
+    await db.promise().query(
+      'UPDATE email_verification_challenges SET requires_profile = 0 WHERE id = ?',
+      [challenge.id],
+    );
+    const [users] = await db.promise().query('SELECT * FROM users WHERE id = ?', [challenge.user_id]);
+    return res.json({ success: true, data: await createSession(users[0]) });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 

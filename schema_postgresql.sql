@@ -15,6 +15,32 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS email_verification_challenges (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(150) NOT NULL,
+  device_id VARCHAR(100) NOT NULL,
+  code_hash VARCHAR(64) NOT NULL,
+  auth_method VARCHAR(20) NOT NULL,
+  requires_profile SMALLINT NOT NULL DEFAULT 0 CHECK (requires_profile IN (0, 1)),
+  expires_at TIMESTAMPTZ NOT NULL,
+  resend_available_at TIMESTAMPTZ NOT NULL,
+  verified_at TIMESTAMPTZ,
+  attempts SMALLINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS trusted_devices (
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  device_id VARCHAR(100) NOT NULL,
+  verified_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_used_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS email_verification_user_idx
+  ON email_verification_challenges (user_id, created_at DESC);
+
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS department VARCHAR(100) NOT NULL DEFAULT 'None';
 

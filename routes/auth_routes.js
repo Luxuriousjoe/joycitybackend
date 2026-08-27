@@ -6,6 +6,9 @@ const { authMiddleware } = require('../middleware/auth_middleware');
 
 router.post('/login', authController.login);
 router.post('/firebase', authController.firebaseLogin);
+router.post('/verification/verify', authController.verifyEmailCode);
+router.post('/verification/resend', authController.resendVerification);
+router.post('/onboarding/complete', authController.completeOnboarding);
 router.post('/register', authController.register);
 router.post('/refresh', authController.refreshToken);
 router.post('/logout', authController.logout);
