@@ -6,6 +6,25 @@ const CODE_TTL_MS = 5 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 2 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
+function normalizeSender(value) {
+  let sender = String(value || '').trim();
+  sender = sender.replace(/^RESEND_FROM_EMAIL\s*=\s*/i, '').trim();
+  if ((sender.startsWith('"') && sender.endsWith('"')) ||
+      (sender.startsWith("'") && sender.endsWith("'"))) {
+    sender = sender.slice(1, -1).trim();
+  }
+
+  const emailMatch = sender.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (!emailMatch) {
+    throw new Error('RESEND_FROM_EMAIL must contain a valid email address');
+  }
+
+  const email = emailMatch[0];
+  const angleFormat = sender.match(/^\s*([^<>]+?)\s*<[^<>]+>\s*$/);
+  const displayName = angleFormat?.[1]?.trim() || 'Joy City International';
+  return `${displayName} <${email}>`;
+}
+
 function cleanDeviceId(value) {
   const deviceId = String(value || '').trim();
   if (!/^[A-Za-z0-9._:-]{16,100}$/.test(deviceId)) {
@@ -24,6 +43,7 @@ function hashCode(challengeId, code) {
 }
 
 async function sendCode(email, code) {
+  const from = normalizeSender(config.resend.from);
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -31,7 +51,7 @@ async function sendCode(email, code) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      from: config.resend.from,
+      from,
       to: [email],
       subject: 'Your Joy City verification code',
       text: `Your Joy City verification code is ${code}. It expires in 5 minutes.`,
