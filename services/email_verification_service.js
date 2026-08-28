@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../config/db_config');
 const config = require('../config/app_config');
+const logger = require('../utils/logger');
 
 const CODE_TTL_MS = 5 * 60 * 1000;
 const RESEND_COOLDOWN_MS = 2 * 60 * 1000;
@@ -52,9 +53,9 @@ async function sendCode(email, code) {
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: config.smtp.user, pass: config.smtp.appPassword },
-      connectionTimeout: 30_000,
-      greetingTimeout: 30_000,
-      socketTimeout: 45_000,
+      connectionTimeout: 8_000,
+      greetingTimeout: 8_000,
+      socketTimeout: 10_000,
     });
     await transporter.sendMail({
       from: `${config.smtp.fromName} <${config.smtp.user}>`,
@@ -84,6 +85,18 @@ async function sendCode(email, code) {
   }
 
   throw new Error('Configure Gmail SMTP or a verified Resend sender');
+}
+
+// Fire-and-forget wrapper. Email delivery (especially Gmail SMTP) can hang for
+// 30-45s on hosts that throttle or block outbound SMTP (Render's free tier is
+// known to). Login/registration must never make the client wait on that — it
+// causes the app to time out and look like it "can't reach the server" even
+// though the request succeeded. The code is already saved to the DB before
+// this runs, so a slow/failed send only delays the email, not the response.
+function sendCodeInBackground(email, code) {
+  sendCode(email, code).catch((error) => {
+    logger.error(`EMAIL_VERIFICATION_SEND_FAILED | ${email} | ${error.message}`);
+  });
 }
 
 async function isTrustedDevice(userId, rawDeviceId) {
@@ -119,7 +132,7 @@ async function issueChallenge({ userId, email, deviceId: rawDeviceId, authMethod
       requiresProfile ? 1 : 0, new Date(now + CODE_TTL_MS),
       new Date(now + RESEND_COOLDOWN_MS)],
   );
-  await sendCode(email, code);
+  sendCodeInBackground(email, code);
   return {
     challengeId: id,
     email,
@@ -170,7 +183,7 @@ async function resendChallenge(challengeId, email, deviceId) {
     [hashCode(challenge.id, code), new Date(now + CODE_TTL_MS),
       new Date(now + RESEND_COOLDOWN_MS), challenge.id],
   );
-  await sendCode(challenge.email, code);
+  sendCodeInBackground(challenge.email, code);
   return { expiresInSeconds: 300, resendAfterSeconds: 120 };
 }
 
