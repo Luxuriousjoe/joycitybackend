@@ -48,6 +48,26 @@ async function sendCode(email, code) {
   const text = `Your Joy City verification code is ${code}. It expires in 5 minutes.`;
   const html = `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:28px"><h2>Verify your email</h2><p>Enter this code in the Joy City app:</p><p style="font-size:34px;font-weight:700;letter-spacing:8px">${code}</p><p>This code expires in 5 minutes. Never share it with anyone.</p></div>`;
 
+  // Render blocks outbound SMTP to Gmail (confirmed via connection timeouts),
+  // so Resend (plain HTTPS) is tried first. Gmail SMTP is kept as a fallback
+  // in case this ever runs somewhere SMTP isn't blocked.
+  if (config.resend.apiKey && config.resend.from) {
+    const from = normalizeSender(config.resend.from);
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.resend.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ from, to: [email], subject, text, html }),
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Resend email failed (${response.status}): ${detail}`);
+    }
+    return;
+  }
+
   if (config.smtp.user && config.smtp.appPassword) {
     const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
@@ -66,23 +86,6 @@ async function sendCode(email, code) {
       text,
       html,
     });
-    return;
-  }
-
-  if (config.resend.apiKey && config.resend.from) {
-    const from = normalizeSender(config.resend.from);
-    const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.resend.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ from, to: [email], subject, text, html }),
-    });
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Resend email failed (${response.status}): ${detail}`);
-    }
     return;
   }
 
