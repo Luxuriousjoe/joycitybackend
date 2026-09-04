@@ -34,8 +34,14 @@ app.use(helmet());
 app.use(
   cors({
     origin: configuredOrigins.includes('*') ? true : configuredOrigins,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+    exposedHeaders: [
+      'Accept-Ranges',
+      'Content-Range',
+      'Content-Length',
+      'Content-Type',
+    ],
     credentials: true,
   }),
 );
@@ -177,4 +183,3 @@ if (require.main === module) {
 }
 
 module.exports = app;
-

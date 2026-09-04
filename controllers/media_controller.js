@@ -4,6 +4,24 @@ const driveService = require('../services/google_drive_service');
 const { removeTemporaryFile } = require('../middleware/media_upload_middleware');
 const logger = require('../utils/logger');
 
+function getApiBaseUrl(req) {
+  return `${req.protocol}://${req.get('host')}/api`;
+}
+
+// Google Drive webContentLink is intended for browser downloads. Audio and
+// video clients instead receive our Range-aware proxy so they can begin
+// playback from the initial buffer and request later byte ranges as needed.
+function withStreamingUrl(req, media) {
+  if (!media?.drive_file_id || !['audio', 'video'].includes(media.type)) {
+    return media;
+  }
+  const urls = driveService.buildDriveUrls(
+    media.drive_file_id,
+    getApiBaseUrl(req),
+  );
+  return { ...media, file_path: urls.apiContentUrl };
+}
+
 // ─── GET ALL MEDIA ────────────────────────────────────────────
 exports.getAllMedia = async (req, res, next) => {
   const { type, page = 1, limit = 20, search } = req.query;
@@ -81,7 +99,8 @@ exports.getAllMedia = async (req, res, next) => {
 
     logger.db('SELECT', 'media', `returned ${rows.length} of ${total} items`);
     return res.json({
-      success: true, data: rows,
+      success: true,
+      data: rows.map((row) => withStreamingUrl(req, row)),
       pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / limit) },
     });
   } catch (err) { logger.error('getAllMedia error:', err.message); next(err); }
@@ -114,7 +133,7 @@ exports.getMediaById = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Media not found' });
     }
     logger.db('SELECT', 'media', `found media id:${id} type:${rows[0].type}`);
-    return res.json({ success: true, data: rows[0] });
+    return res.json({ success: true, data: withStreamingUrl(req, rows[0]) });
   } catch (err) { logger.error('getMediaById error:', err.message); next(err); }
 };
 
@@ -139,9 +158,21 @@ exports.streamDriveFile = async (req, res, next) => {
     res.status(response.status || 200);
     res.setHeader('Content-Type', headers['content-type'] || rows[0].mime_type || 'application/octet-stream');
     res.setHeader('Accept-Ranges', headers['accept-ranges'] || 'bytes');
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     if (headers['content-length']) res.setHeader('Content-Length', headers['content-length']);
     if (headers['content-range']) res.setHeader('Content-Range', headers['content-range']);
-    response.data.on('error', next);
+    const stopUpstream = () => {
+      if (!response.data.destroyed) response.data.destroy();
+    };
+    req.once('aborted', stopUpstream);
+    res.once('close', () => {
+      if (!res.writableEnded) stopUpstream();
+    });
+    response.data.once('error', (error) => {
+      if (res.headersSent) return res.destroy(error);
+      return next(error);
+    });
     response.data.pipe(res);
   } catch (error) {
     next(error);
@@ -182,10 +213,12 @@ exports.createMedia = async (req, res, next) => {
       mediaType: type,
     });
 
-    const apiBaseUrl = `${req.protocol}://${req.get('host')}/api`;
+    const apiBaseUrl = getApiBaseUrl(req);
     const urls = driveService.buildDriveUrls(driveFile.id, apiBaseUrl);
-    const contentUrl = driveFile.contentUrl || urls.apiContentUrl;
-    const thumbnailUrl = type === 'photo' ? contentUrl : null;
+    const contentUrl = urls.apiContentUrl;
+    const thumbnailUrl = type === 'photo'
+      ? (driveFile.contentUrl || contentUrl)
+      : null;
 
     const parsedMetadata = typeof metadata === 'string' ? (() => {
       try { return JSON.parse(metadata); } catch (_error) { return {}; }
@@ -366,7 +399,10 @@ exports.getAdminQueue = async (req, res, next) => {
       [req.user.id]
     );
     logger.db('SELECT', 'media+uploads', `admin queue: ${rows.length} items for user:${req.user.id}`);
-    return res.json({ success: true, data: rows });
+    return res.json({
+      success: true,
+      data: rows.map((row) => withStreamingUrl(req, row)),
+    });
   } catch (err) { logger.error('getAdminQueue error:', err.message); next(err); }
 };
 
