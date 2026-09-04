@@ -1,5 +1,10 @@
 const db = require('../config/db_config');
 const logger = require('../utils/logger');
+const pushNotificationService = require('../services/push_notification_service');
+const {
+  normalizePlatform,
+  normalizeTimezoneOffset,
+} = require('../utils/push_notification_helpers');
 
 const preferenceFields = [
   'login_welcome', 'timely_reflections', 'events', 'sermons',
@@ -14,6 +19,119 @@ async function ensurePreferences(userId) {
     [userId],
   );
 }
+
+exports.registerDevice = async (req, res, next) => {
+  try {
+    const token = String(req.body.token || '').trim();
+    const platform = normalizePlatform(req.body.platform);
+    const deviceId = String(req.body.device_id || '').trim().slice(0, 100) || null;
+    const appVersion = String(req.body.app_version || '').trim().slice(0, 50) || null;
+    const timezoneOffset = normalizeTimezoneOffset(req.body.timezone_offset_minutes);
+
+    if (token.length < 20 || token.length > 4096 || !platform) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid Firebase token and android or ios platform are required',
+      });
+    }
+
+    await ensurePreferences(req.user.id);
+    await db.pool.query(
+      [
+        'INSERT INTO device_push_tokens',
+        '  (user_id, token, device_id, platform, timezone_offset_minutes, app_version, active, last_seen_at)',
+        'VALUES ($1, $2, $3, $4, $5, $6, 1, NOW())',
+        'ON CONFLICT (token) DO UPDATE SET',
+        '  user_id = EXCLUDED.user_id,',
+        '  device_id = EXCLUDED.device_id,',
+        '  platform = EXCLUDED.platform,',
+        '  timezone_offset_minutes = EXCLUDED.timezone_offset_minutes,',
+        '  app_version = EXCLUDED.app_version,',
+        '  active = 1,',
+        '  last_seen_at = NOW(),',
+        '  updated_at = NOW()',
+      ].join('\n'),
+      [req.user.id, token, deviceId, platform, timezoneOffset, appVersion],
+    );
+
+    if (deviceId) {
+      await db.pool.query(
+        [
+          'UPDATE device_push_tokens',
+          'SET active = 0, updated_at = NOW()',
+          'WHERE user_id = $1 AND device_id = $2 AND platform = $3 AND token <> $4',
+        ].join('\n'),
+        [req.user.id, deviceId, platform, token],
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: 'This device is registered for notifications',
+    });
+  } catch (error) {
+    logger.error('registerNotificationDevice error:', error.message);
+    next(error);
+  }
+};
+
+exports.unregisterDevice = async (req, res, next) => {
+  try {
+    const token = String(req.body.token || '').trim();
+    const deviceId = String(req.body.device_id || '').trim();
+
+    if (!token && !deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'A device token or device ID is required',
+      });
+    }
+
+    const result = await db.pool.query(
+      [
+        'UPDATE device_push_tokens',
+        'SET active = 0, updated_at = NOW()',
+        'WHERE user_id = $1',
+        '  AND (($2 <> $4 AND token = $2) OR ($3 <> $4 AND device_id = $3))',
+      ].join('\n'),
+      [req.user.id, token, deviceId, ''],
+    );
+
+    return res.json({
+      success: true,
+      message: 'This device will no longer receive account notifications',
+      deactivated: result.rowCount,
+    });
+  } catch (error) {
+    logger.error('unregisterNotificationDevice error:', error.message);
+    next(error);
+  }
+};
+
+exports.getDeviceStatus = async (req, res, next) => {
+  try {
+    const result = await db.pool.query(
+      [
+        'SELECT COUNT(*)::int AS active_devices, MAX(last_seen_at) AS last_registered_at',
+        'FROM device_push_tokens WHERE user_id = $1 AND active = 1',
+      ].join('\n'),
+      [req.user.id],
+    );
+    const configuration = pushNotificationService.getConfigurationStatus();
+    return res.json({
+      success: true,
+      data: {
+        active_devices: result.rows[0].active_devices,
+        last_registered_at: result.rows[0].last_registered_at,
+        push_enabled: configuration.enabled,
+        push_configured: configuration.configured,
+      },
+    });
+  } catch (error) {
+    logger.error('getNotificationDeviceStatus error:', error.message);
+    next(error);
+  }
+};
 
 exports.getPreferences = async (req, res, next) => {
   try {
@@ -163,6 +281,13 @@ exports.createNotification = async (req, res, next) => {
        expires_at || null, req.user.id],
     );
     const [rows] = await db.promise().query('SELECT * FROM notifications WHERE id = ?', [result.insertId]);
+    setImmediate(() => {
+      pushNotificationService.dispatchNotificationById(result.insertId)
+        .catch((error) => logger.error(
+          'Immediate push dispatch failed for notification ' + result.insertId + ':',
+          error.message,
+        ));
+    });
     return res.status(201).json({ success: true, message: 'Notification scheduled', data: rows[0] });
   } catch (error) {
     logger.error('createNotification error:', error.message);
@@ -180,3 +305,4 @@ exports.deleteNotification = async (req, res, next) => {
     next(error);
   }
 };
+

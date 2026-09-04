@@ -10,6 +10,7 @@ const db = require('./config/db_config');
 const logger = require('./utils/logger');
 const errorHandler = require('./middleware/error_handler');
 const driveService = require('./services/google_drive_service');
+const pushNotificationService = require('./services/push_notification_service');
 
 const authRoutes = require('./routes/auth_routes');
 const mediaRoutes = require('./routes/media_routes');
@@ -73,6 +74,7 @@ app.get('/health', async (_req, res) => {
         provider: 'google_drive',
         ...driveService.getConfigurationStatus(),
       },
+      notifications: pushNotificationService.getConfigurationStatus(),
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
@@ -104,6 +106,17 @@ app.use('*', (req, res) => {
 });
 app.use(errorHandler);
 
+cron.schedule('* * * * *', async () => {
+  try {
+    const result = await pushNotificationService.dispatchDueNotifications();
+    if (result.processed > 0) {
+      logger.info('PUSH | Processed ' + result.processed + ' due notification(s)');
+    }
+  } catch (error) {
+    logger.error('Push notification cron error:', error.message);
+  }
+});
+
 cron.schedule('*/2 * * * *', async () => {
   try {
     const deliveryController = require('./controllers/delivery_controller');
@@ -131,6 +144,11 @@ async function start() {
   logger.startup(
     `Google Drive configured: ${driveStatus.configured} (${driveStatus.authMode || 'no auth mode'})`,
   );
+  const pushStatus = pushNotificationService.getConfigurationStatus();
+  logger.startup(
+    `Firebase push configured: ${pushStatus.configured}; enabled: ${pushStatus.enabled}`,
+  );
+  if (pushStatus.error) logger.warn('Firebase push configuration: ' + pushStatus.error);
   await db.pool.query('SELECT 1');
   const userCount = await db.pool.query('SELECT COUNT(*) AS count FROM users');
   logger.startup(`PostgreSQL connected; ${userCount.rows[0].count} user(s)`);
@@ -159,3 +177,4 @@ if (require.main === module) {
 }
 
 module.exports = app;
+

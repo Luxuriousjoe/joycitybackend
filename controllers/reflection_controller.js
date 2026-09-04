@@ -134,6 +134,12 @@ exports.upsertReflection = async (req, res, next) => {
   } = payload;
 
   try {
+    const [existingRows] = await db.promise().query(
+      'SELECT id, is_published FROM timely_reflections WHERE publish_date = ?',
+      [publishDate],
+    );
+    const shouldNotify = !existingRows[0] || Number(existingRows[0].is_published) !== 1;
+
     const [result] = await db.promise().query(
       `INSERT INTO timely_reflections
         (title, scripture_reference, scripture_text, reflection_text, prayer,
@@ -164,7 +170,7 @@ exports.upsertReflection = async (req, res, next) => {
     );
     const reflectionId = result.rows[0].id;
 
-    if (isPublished) {
+    if (isPublished && shouldNotify) {
       try {
         await db.promise().query(
           `INSERT INTO notifications
@@ -173,7 +179,7 @@ exports.upsertReflection = async (req, res, next) => {
           [
             `Timely Reflection: ${title}`,
             `${scriptureReference} — Your reflection for today is ready.`,
-            `${publishDate}T06:00:00+01:00`,
+            `${publishDate}T07:30:00+01:00`,
             req.user.id,
           ],
         );
@@ -350,3 +356,4 @@ exports.deleteReflection = async (req, res, next) => {
     next(error);
   }
 };
+

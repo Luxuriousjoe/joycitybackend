@@ -14,7 +14,7 @@
     "admin:create": "node scripts/create_admin.js",
     "admin:bootstrap": "node scripts/bootstrap_admin.js",
     "drive:verify": "node scripts/verify_drive.js",
-    "check": "node scripts/check.js && node scripts/sql_compat_test.js && node scripts/registration_validation_test.js"
+    "check": "node scripts/check.js && node scripts/sql_compat_test.js && node scripts/registration_validation_test.js && node scripts/push_notification_helpers_test.js"
   },
   "dependencies": {
     "axios": "^1.6.2",
@@ -40,3 +40,4 @@
     "nodemon": "^3.0.2"
   }
 }
+

@@ -51,6 +51,9 @@ exports.createEvent = async (req, res, next) => {
     if (ends_at && Number.isNaN(Date.parse(ends_at))) {
       return res.status(400).json({ success: false, message: 'Event end date is invalid' });
     }
+    if (ends_at && new Date(ends_at).getTime() < new Date(starts_at).getTime()) {
+      return res.status(400).json({ success: false, message: 'Event end cannot be before its start' });
+    }
     const [result] = await db.promise().query(
       `INSERT INTO church_events
         (title, description, category, location, starts_at, ends_at, image_url,
@@ -104,9 +107,16 @@ exports.updateEvent = async (req, res, next) => {
     if (!existing.length) return res.status(404).json({ success: false, message: 'Event not found' });
     const current = existing[0];
     const nextStart = starts_at ?? current.starts_at;
-    const nextEnd = ends_at === '' ? null : (ends_at ?? current.ends_at);
+    const suppliedEnd = Object.prototype.hasOwnProperty.call(req.body, 'ends_at');
+    const nextEnd = suppliedEnd ? (ends_at || null) : current.ends_at;
     if (!title?.trim() || Number.isNaN(Date.parse(nextStart))) {
       return res.status(400).json({ success: false, message: 'Event title and a valid start date are required' });
+    }
+    if (nextEnd && Number.isNaN(Date.parse(nextEnd))) {
+      return res.status(400).json({ success: false, message: 'Event end date is invalid' });
+    }
+    if (nextEnd && new Date(nextEnd).getTime() < new Date(nextStart).getTime()) {
+      return res.status(400).json({ success: false, message: 'Event end cannot be before its start' });
     }
     await db.promise().query(
       `UPDATE church_events SET title=?, description=?, category=?, location=?,

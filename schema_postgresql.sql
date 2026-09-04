@@ -279,6 +279,10 @@ CREATE TABLE IF NOT EXISTS notifications (
   expires_at TIMESTAMPTZ,
   is_active SMALLINT NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
   created_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  push_sent_at TIMESTAMPTZ,
+  push_last_attempt_at TIMESTAMPTZ,
+  push_attempts INTEGER NOT NULL DEFAULT 0 CHECK (push_attempts >= 0),
+  push_last_error VARCHAR(1000),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CHECK (audience_type = 'all' OR audience_value IS NOT NULL),
@@ -290,6 +294,49 @@ CREATE TABLE IF NOT EXISTS notification_reads (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   read_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (notification_id, user_id)
+);
+
+-- Existing notifications are marked as already handled when this migration first
+-- adds push tracking, preventing a deployment from flooding users with old alerts.
+ALTER TABLE notifications
+  ADD COLUMN IF NOT EXISTS push_sent_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS push_last_attempt_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS push_attempts INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS push_last_error VARCHAR(1000);
+ALTER TABLE notifications ALTER COLUMN push_sent_at DROP DEFAULT;
+UPDATE notifications
+SET push_sent_at = NULL
+WHERE scheduled_at > CURRENT_TIMESTAMP AND push_attempts = 0;
+
+CREATE TABLE IF NOT EXISTS device_push_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE,
+  device_id VARCHAR(100),
+  platform VARCHAR(20) NOT NULL
+    CHECK (platform IN ('android', 'ios')),
+  timezone_offset_minutes SMALLINT NOT NULL DEFAULT 0
+    CHECK (timezone_offset_minutes BETWEEN -840 AND 840),
+  app_version VARCHAR(50),
+  active SMALLINT NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS notification_push_deliveries (
+  id BIGSERIAL PRIMARY KEY,
+  notification_id BIGINT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+  device_token_id BIGINT NOT NULL REFERENCES device_push_tokens(id) ON DELETE CASCADE,
+  status VARCHAR(20) NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'sending', 'sent', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  last_attempt_at TIMESTAMPTZ,
+  last_error VARCHAR(1000),
+  sent_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (notification_id, device_token_id)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS saved_videos_user_media_unique
@@ -326,6 +373,13 @@ CREATE INDEX IF NOT EXISTS testimonies_status_featured_idx
   ON testimonies (status, is_featured, created_at DESC);
 CREATE INDEX IF NOT EXISTS notifications_schedule_idx
   ON notifications (is_active, scheduled_at DESC);
+CREATE INDEX IF NOT EXISTS notifications_push_due_idx
+  ON notifications (scheduled_at, id)
+  WHERE is_active = 1 AND push_sent_at IS NULL;
+CREATE INDEX IF NOT EXISTS device_push_tokens_user_active_idx
+  ON device_push_tokens (user_id, active);
+CREATE INDEX IF NOT EXISTS notification_push_deliveries_retry_idx
+  ON notification_push_deliveries (notification_id, status, last_attempt_at);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER AS $$
@@ -409,4 +463,16 @@ CREATE TRIGGER notifications_set_updated_at
 BEFORE UPDATE ON notifications
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+DROP TRIGGER IF EXISTS device_push_tokens_set_updated_at ON device_push_tokens;
+CREATE TRIGGER device_push_tokens_set_updated_at
+BEFORE UPDATE ON device_push_tokens
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+DROP TRIGGER IF EXISTS notification_push_deliveries_set_updated_at
+  ON notification_push_deliveries;
+CREATE TRIGGER notification_push_deliveries_set_updated_at
+BEFORE UPDATE ON notification_push_deliveries
+FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 COMMIT;
+

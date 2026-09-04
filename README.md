@@ -11,7 +11,7 @@ Node.js/Express API for the Joy City International mobile app, backed by Postgre
 
 ## Render settings
 
-- Root Directory: `JoyCity_backend`
+- Root Directory: `joycitybackend-main`
 - Build Command: `npm install`
 - Start Command: `npm run db:migrate && npm run admin:bootstrap && npm start`
 - Health Check Path: `/health`
@@ -138,3 +138,29 @@ configured start command.
 New events, newly uploaded sermons, published Timely Reflections, and featured
 testimonies create notification-inbox entries automatically. Event creation also
 schedules a 24-hour reminder when enough time remains.
+
+## Firebase push delivery
+
+Set these only in Render or your local untracked .env:
+
+    FIREBASE_PROJECT_ID=joycityinternational-8bbd0
+    FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+    PUSH_NOTIFICATIONS_ENABLED=true
+    PUSH_BATCH_SIZE=500
+    PUSH_MAX_ATTEMPTS=8
+
+Create the service-account JSON in Firebase/Google Cloud and paste the complete
+JSON as one Render secret. Do not add the JSON or private key to Git. The
+npm run db:migrate startup step creates device-token and per-device delivery
+tables. The server dispatches due notifications once per minute, respects each
+member's category and quiet-hour preferences, retries transient failures, and
+deactivates invalid FCM tokens.
+
+Authenticated device endpoints are:
+
+- POST /api/notifications/devices/register
+- DELETE /api/notifications/devices/unregister
+- GET /api/notifications/devices/status
+
+The /health response reports whether push is enabled and configured without
+returning any credential material.

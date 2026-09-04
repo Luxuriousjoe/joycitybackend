@@ -23,6 +23,12 @@ services:
         value: joycityinternational-8bbd0
       - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
+      - key: PUSH_NOTIFICATIONS_ENABLED
+        value: "true"
+      - key: PUSH_BATCH_SIZE
+        value: "500"
+      - key: PUSH_MAX_ATTEMPTS
+        value: "8"
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL
@@ -76,3 +82,4 @@ databases:
     plan: free
     databaseName: joy_city
     user: joy_city_api
+

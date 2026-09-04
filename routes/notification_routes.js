@@ -3,6 +3,9 @@ const controller = require('../controllers/notification_controller');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth_middleware');
 
 const router = express.Router();
+router.post('/devices/register', authMiddleware, controller.registerDevice);
+router.delete('/devices/unregister', authMiddleware, controller.unregisterDevice);
+router.get('/devices/status', authMiddleware, controller.getDeviceStatus);
 router.get('/preferences', authMiddleware, controller.getPreferences);
 router.put('/preferences', authMiddleware, controller.updatePreferences);
 router.get('/', authMiddleware, controller.getNotifications);
@@ -13,3 +16,4 @@ router.post('/admin', adminMiddleware, controller.createNotification);
 router.delete('/admin/:id', adminMiddleware, controller.deleteNotification);
 
 module.exports = router;
+
